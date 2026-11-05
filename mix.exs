@@ -22,6 +22,8 @@ defmodule ChoirCoach.MixProject do
     [
       {:mob, "~> 0.9.26"},
       {:mob_dev, "~> 0.7.31", only: :dev, runtime: false},
+      # `mix mob.icon --source` resizes the app icon with it (host only).
+      {:image, "~> 0.54", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.18"},
       # Code quality — Credo + ex_slop (catches AI-generated patterns
       # like blanket rescue, narrator docs, redundant Enum chains, etc).

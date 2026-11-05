@@ -93,6 +93,13 @@ cross-correlation.
 - Scripts connecting over dist need the project cookie:
   `Node.set_cookie(MobDev.DistCookie.for_project!())`.
 - Mob's root already insets the safe area; don't pad it again.
+- App icon: `mix mob.icon --source choir-pitch-coach-icon.png --adaptive
+  --adaptive-bg "#0B1017"` (1024² artwork, dark background #0B1017). It
+  reuses the full image as the adaptive foreground, which a round launcher
+  mask crops (star and base), so the five `mipmap-*/ic_launcher_foreground.png`
+  were then redrawn: the artwork trimmed (`-crop 728x875+143+70`), scaled to
+  56 % of the icon's height and centred on #0B1017, so it sits inside the
+  visible 72/108 circle. Re-running `mob.icon` overwrites them: redo that step.
 - Check the C before a device build:
   `$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-linux-android24
   --sysroot=… -I ~/.mob/cache/otp-android-*/erts-*/include
