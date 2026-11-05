@@ -35,6 +35,8 @@ defmodule ChoirCoach.Audio do
   @callback position(state()) :: {:playing | :paused | :loading, float()}
   @callback set_mix(state(), float(), float()) :: state()
   @callback listen(state(), :mic | :playback) :: {:ok, state()} | {:error, term(), state()}
+  @doc "How much earlier than their arrival mic readings were sung (headphone delay), in ms."
+  @callback set_mic_delay(state(), number()) :: state()
   @callback readings(state()) :: {[reading()], state()}
 
   @doc "The configured engine module."

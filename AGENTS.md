@@ -63,7 +63,12 @@ Coach" (reference artboard 390 × 844 pt); its tokens live in
   `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`.
 - `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
   readings are octave-folded and gated to the written notes before they feed
-  the trace and feedback.
+  the trace and feedback. The header gear opens `ChoirCoach.SettingsScreen`.
+- `ChoirCoach.Settings` — saved preferences in `Mob.State`. The headphone
+  delay (`:mic_delay_ms`, 0–400 ms in 10 ms steps) is how much earlier mic
+  readings were sung than they arrive; it differs between wired and
+  Bluetooth headphones, so the singer sets it. Settings sends changes to the
+  practice screen as `{:mic_delay, ms}`, which applies them to the engine.
 
 ## Audio files
 
@@ -98,8 +103,9 @@ cross-correlation.
   showed and how well the trace fits the score; `SOURCE=playback` analyses
   the track itself, `SOURCE=mic` the microphone. The phone hearing its own
   speaker (mic) should fit at the same lag as playback: that is how
-  `:mic_latency_ms` (60 ms on the moto g; Android gives no input
-  timestamps there) was measured.
+  the `:mic_latency_ms` default (60 ms on the moto g, used until the singer
+  saves a headphone delay; Android gives no input timestamps there) was
+  measured.
 - `scripts/frame_rate.exs` measures frame rate on the device. Moto g power
   2021 with playback and mic analysis running: ~29 fps, every frame applied,
   BEAM 18 ms p50 per frame, native apply 22 ms p50 / 35 ms p95, no audio

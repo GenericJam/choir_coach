@@ -142,6 +142,34 @@ defmodule ChoirCoach.ControlsView do
     ]
   end
 
+  @doc "A settings gear filling a `size`-square canvas."
+  @spec gear(number()) :: [map()]
+  def gear(size) do
+    c = size / 2
+    color = Style.text_secondary()
+
+    teeth =
+      for i <- 0..7 do
+        a = i * :math.pi() / 4
+
+        line(
+          c + 7 * :math.cos(a),
+          c + 7 * :math.sin(a),
+          c + 10 * :math.cos(a),
+          c + 10 * :math.sin(a),
+          color: color,
+          width: 3,
+          cap: :round
+        )
+      end
+
+    List.flatten([
+      teeth,
+      circle(c, c, 7, color: color, width: 2.2),
+      circle(c, c, 2.5, color: color, fill: true)
+    ])
+  end
+
   @doc """
   Progress track: played portion, the loop range in the UI accent, and the
   position knob. `fraction` and the loop bounds are 0..1 of the section.

@@ -15,7 +15,18 @@ defmodule ChoirCoach.PracticeScreen do
 
   use Mob.Screen
 
-  alias ChoirCoach.{Audio, ControlsView, Feedback, Pitch, PracticeView, Song, Style}
+  alias ChoirCoach.{
+    Audio,
+    ControlsView,
+    Feedback,
+    Pitch,
+    PracticeView,
+    Settings,
+    SettingsScreen,
+    Song,
+    Style
+  }
+
   alias ChoirCoach.Songs.GloriousNight
 
   @frame_ms 33
@@ -46,7 +57,11 @@ defmodule ChoirCoach.PracticeScreen do
         tracks: tracks,
         track_mode: mode,
         engine: engine,
-        audio: song |> engine.new() |> engine.load(tracks[mode]),
+        audio:
+          song
+          |> engine.new()
+          |> engine.set_mic_delay(Settings.mic_delay_ms())
+          |> engine.load(tracks[mode]),
         audio_status: :loading,
         resume_at: nil,
         mic: :unknown,
@@ -160,6 +175,7 @@ defmodule ChoirCoach.PracticeScreen do
     song = assigns.song
     header_height = @header_height
     track_tap = {self(), :track}
+    settings_tap = {self(), :settings}
     pill = part_name(song.part) <> " · " <> track_label(assigns.track_mode)
 
     ~MOB"""
@@ -193,6 +209,8 @@ defmodule ChoirCoach.PracticeScreen do
           font_weight="bold"
         />
       </Box>
+      <Spacer size={8} />
+      <Canvas width={32} height={32} draw={ControlsView.gear(32)} on_tap={settings_tap} />
     </Row>
     """
   end
@@ -278,6 +296,18 @@ defmodule ChoirCoach.PracticeScreen do
 
   def handle_info({:permission, :microphone, result}, socket) do
     {:noreply, socket |> Mob.Socket.assign(:mic, result) |> maybe_listen()}
+  end
+
+  # The gear: pause (nothing to watch while adjusting) and open settings,
+  # which report changes straight back here.
+  def handle_info({:tap, :settings}, socket) do
+    socket = if socket.assigns.playing, do: pause(socket), else: socket
+    {:noreply, Mob.Socket.push_screen(socket, SettingsScreen, %{practice: self()})}
+  end
+
+  def handle_info({:mic_delay, ms}, socket) when is_number(ms) do
+    a = socket.assigns
+    {:noreply, Mob.Socket.assign(socket, :audio, a.engine.set_mic_delay(a.audio, ms))}
   end
 
   # Jump to a song time (ms), keeping play / pause as it is.

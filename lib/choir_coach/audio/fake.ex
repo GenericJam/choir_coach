@@ -56,6 +56,9 @@ defmodule ChoirCoach.Audio.Fake do
   def listen(state, _source), do: {:ok, state}
 
   @impl true
+  def set_mic_delay(state, _ms), do: state
+
+  @impl true
   def readings(%{playing: false} = state), do: {[], state}
 
   def readings(state) do

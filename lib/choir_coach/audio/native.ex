@@ -5,10 +5,10 @@ defmodule ChoirCoach.Audio.Native do
   The NIF speaks track time. `shift` is how far a track's bar 1 sits from the
   song's bar 1, so song time = track time − shift.
 
-  Mic readings are also moved earlier by the device's input latency
-  (`config :choir_coach, :mic_latency_ms`): Android often can't timestamp a
-  shared-mode input stream, so the NIF stamps a reading when it arrives, not
-  when it was sung.
+  Mic readings are also moved earlier by the headphone delay
+  (`set_mic_delay/2`, from `ChoirCoach.Settings`): Android often can't
+  timestamp a shared-mode input stream, so the NIF stamps a reading when it
+  arrives, not when it was sung, and Bluetooth headphones add their own lag.
 
   Readings below `@min_db` or `@min_confidence` are reported as silence: the
   detector still answers on breath noise and room tone, just unconvincingly.
@@ -22,7 +22,7 @@ defmodule ChoirCoach.Audio.Native do
   @min_db -45.0
   @min_confidence 0.5
 
-  defstruct song_start: 0.0, shift: 0.0, layout: :mixed, latency: 0.0
+  defstruct song_start: 0.0, shift: 0.0, layout: :mixed, source: nil, mic_delay: 0.0
 
   @impl true
   def new(%Song{} = song), do: %__MODULE__{song_start: Song.start_ms(song)}
@@ -63,22 +63,20 @@ defmodule ChoirCoach.Audio.Native do
 
   @impl true
   def listen(state, source) do
-    latency =
-      if source == :mic,
-        do: Application.get_env(:choir_coach, :mic_latency_ms, 0) * 1.0,
-        else: 0.0
-
     case Nif.listen(source) do
-      :ok -> {:ok, %{state | latency: latency}}
+      :ok -> {:ok, %{state | source: source}}
       {:error, reason} -> {:error, reason, state}
     end
   end
 
   @impl true
+  def set_mic_delay(state, ms), do: %{state | mic_delay: ms * 1.0}
+
+  @impl true
   def readings(state) do
     readings =
       for {ms, hz, conf, db} <- Nif.readings() do
-        t = ms - state.shift - state.latency
+        t = ms - state.shift - if(state.source == :mic, do: state.mic_delay, else: 0.0)
 
         if hz > 0 and db >= @min_db and conf >= @min_confidence,
           do: {t, Pitch.midi(hz), conf},
