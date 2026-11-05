@@ -46,31 +46,61 @@ part first. The visual design is the Claude Design handoff "Choir Pitch
 Coach" (reference artboard 390 × 844 pt); its tokens live in
 `ChoirCoach.Style`.
 
-- `ChoirCoach.Song` — a voice part as timed notes, built bar by bar from the
-  score (`Song.build/1` rejects a bar whose beats don't add up).
-  `ChoirCoach.Songs.*` hold transcriptions.
+- `ChoirCoach.Song` — a voice part as timed notes on the rehearsal track's
+  timeline, built bar by bar from the score (`Song.build/1` rejects a bar
+  whose beats don't add up; `start_ms` places bar 1, `bar_ms` stretches a
+  rit. or fermata). `ChoirCoach.Songs.*` hold transcriptions and each
+  track's bar-1 offset and voice channel.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. `ChoirCoach.ControlsView` draws
   the transport icons and progress track.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
   wording, following the handoff's motion rules.
-- `ChoirCoach.PracticeScreen` — playback clock, ~30 fps frame tick, trace
-  buffer. Pitch readings come from `ChoirCoach.FakeSinger` until the audio
-  engine exists; the trace format (`{t_ms, midi | nil, confidence}`) is what
-  the engine must produce.
+- `ChoirCoach.Audio` — the engine contract (song-time play / pause /
+  position / mix / listen / readings). `Audio.Native` wraps the
+  `choir_audio` NIF (`c_src/choir_audio.c`: AAudio playback and mic, NDK
+  decoder, YIN in `c_src/pitch_yin.c`; Android only, loaded with dlopen).
+  `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`.
+- `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
+  readings are octave-folded and gated to the written notes before they feed
+  the trace and feedback.
+
+## Audio files
+
+The rehearsal tracks are licensed recordings: they live in `priv/audio/`
+(gitignored) and reach the phone with the BEAMs on deploy. What a Glorious
+Night (Drive folder "3. What A Glorious Night"): `bass.mp3` (bass voice left,
+accompaniment right, bar 1 at 358 ms), `split.mp3` (choir right,
+accompaniment left, 409 ms), `demo.mp3` (full mix with narration, 18 449 ms).
+Offsets were measured by aligning the transcription to the detector's
+reading of the bass channel, and the tracks to each other by
+cross-correlation.
 
 ## Working on it
 
 - Run mix through mise (`mise exec -- mix …`): `.tool-versions` pins zig
   0.17.0, and a dev build earlier on the PATH fails the native build.
-- Android phone: `mix mob.deploy --android --device <serial>`, then restart
-  with `mix mob.connect --no-iex --android-only --device <serial>`. Without
-  `--android-only --device` it restarts the app on every iPhone and simulator
-  it finds. A hot push keeps the old screen process; restart after changing
-  the screen's assigns.
+- Android phone: `mix mob.deploy --android --device <serial>` (add `--native`
+  after changing `c_src/`), then restart with `mix mob.connect --no-iex
+  --android-only --device <serial>`. Without `--android-only --device` it
+  restarts the app on every iPhone and simulator it finds. A hot push keeps
+  the old screen process and can't reload a NIF; restart after either.
 - Scripts connecting over dist need the project cookie:
   `Node.set_cookie(MobDev.DistCookie.for_project!())`.
 - Mob's root already insets the safe area; don't pad it again.
+- Check the C before a device build:
+  `$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-linux-android24
+  --sysroot=… -I ~/.mob/cache/otp-android-*/erts-*/include
+  -DSTATIC_ERLANG_NIF_LIBNAME=choir_audio -Wall -Wextra -fsyntax-only c_src/choir_audio.c`.
+  The detector alone builds on the Mac: `cc -O2 -o /tmp/pitch_host
+  c_src/test/pitch_host.c -lm`, fed `ffmpeg … -f f32le -` PCM.
+- `scripts/device_check.exs` plays a stretch and reports what the screen
+  showed and how well the trace fits the score; `SOURCE=playback` analyses
+  the track itself, `SOURCE=mic` the microphone. The phone hearing its own
+  speaker (mic) should fit at the same lag as playback: that is how
+  `:mic_latency_ms` (60 ms on the moto g; Android gives no input
+  timestamps there) was measured.
 - `scripts/frame_rate.exs` measures frame rate on the device. Moto g power
-  2021 baseline (fake singer): ~29 fps, BEAM 14 ms p50 per frame, native apply
-  21 ms p50 / 36 ms p95, ~17% of frame intervals over 50 ms.
+  2021 with playback and mic analysis running: ~29 fps, every frame applied,
+  BEAM 18 ms p50 per frame, native apply 22 ms p50 / 35 ms p95, no audio
+  underruns.

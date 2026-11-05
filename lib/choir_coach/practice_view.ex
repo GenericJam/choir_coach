@@ -118,16 +118,10 @@ defmodule ChoirCoach.PracticeView do
         )
       end
 
-    beat_ms = Song.beat_ms(frame.song)
-    bar_starts = MapSet.new(frame.song.bars, &round(&1.start_ms))
-    first_beat = ceil(max(g.from_ms, 0) / beat_ms)
-    last_beat = floor(min(g.to_ms, Song.duration_ms(frame.song)) / beat_ms)
-
     beats =
-      for b <- first_beat..last_beat//1 do
-        t = b * beat_ms
+      for {t, bar_start?} <- Song.beats_between(frame.song, g.from_ms, g.to_ms) do
         x = x_of(g, t)
-        alpha = if MapSet.member?(bar_starts, round(t)), do: :bar_line, else: :beat_line
+        alpha = if bar_start?, do: :bar_line, else: :beat_line
 
         line(x, g.roll_top, x, g.height,
           color: Style.white(),
@@ -411,7 +405,10 @@ defmodule ChoirCoach.PracticeView do
   Split the visible trace into drawable runs. Samples with confidence ≥ 0.5
   form solid runs coloured by their error against the note sung at the time
   (bucketed to 5¢ so one colour is one path); 0.2–0.5 form thin dotted runs;
-  below 0.2, or silence, is a gap.
+  below 0.2, or silence, is a gap. A jump of more than 3 semitones between
+  neighbouring points (20 ms apart) also breaks the line: no voice glides
+  that fast, so it's the detector catching an instrument or harmonic, and a
+  connecting stroke would draw a spike across the roll.
   """
   @spec trace_runs(frame(), map()) :: [
           %{style: :solid | :dotted, bucket: integer() | nil, points: list()}
@@ -441,13 +438,24 @@ defmodule ChoirCoach.PracticeView do
           (Pitch.cents(midi, note.midi) / 5) |> round() |> Kernel.*(5) |> max(-50) |> min(50)
       end
 
-    %{style: if(c < 0.5, do: :dotted, else: :solid), bucket: bucket, point: point}
+    %{
+      style: if(c < 0.5, do: :dotted, else: :solid),
+      bucket: bucket,
+      point: point,
+      max_jump: 3 * g.semitone
+    }
   end
 
   defp chunk_run(:gap, nil), do: {:cont, nil}
   defp chunk_run(:gap, run), do: {:cont, finalize(run), nil}
 
   defp chunk_run(s, nil), do: {:cont, %{style: s.style, bucket: s.bucket, points: [s.point]}}
+
+  # An implausible leap: end the run without joining the points.
+  defp chunk_run(%{point: {_, y}} = s, %{points: [{_, last_y} | _]} = run)
+       when abs(y - last_y) > s.max_jump do
+    {:cont, finalize(run), %{style: s.style, bucket: s.bucket, points: [s.point]}}
+  end
 
   defp chunk_run(s, %{style: style, bucket: bucket} = run)
        when s.style == style and s.bucket == bucket do
@@ -713,7 +721,7 @@ defmodule ChoirCoach.PracticeView do
   end
 
   defp gaps(%Song{notes: notes} = song) do
-    ends = [0.0 | Enum.map(notes, &(&1.start_ms + &1.dur_ms))]
+    ends = [Song.start_ms(song) | Enum.map(notes, &(&1.start_ms + &1.dur_ms))]
     starts = Enum.map(notes, & &1.start_ms) ++ [Song.duration_ms(song)]
 
     ends

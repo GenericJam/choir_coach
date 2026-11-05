@@ -2,16 +2,18 @@ defmodule ChoirCoach.Song do
   @moduledoc """
   One voice part of a song as a time-ordered list of sung notes.
 
-  Times are milliseconds from the start of the playable section. Gaps between
-  notes are rests or breaths. A song is built from bars written the way they
-  read on the page, so a transcription can be checked against the score bar
-  by bar:
+  Times are milliseconds on the rehearsal track's timeline, so the playback
+  position is directly a song time. Gaps between notes are rests or breaths.
+  A song is built from bars written the way they read on the page, so a
+  transcription can be checked against the score bar by bar:
 
       Song.build(
         title: "What a Glorious Night",
         tempo_bpm: 105,
         beats_per_bar: 4,
         first_bar: 20,
+        start_ms: 358.0,
+        bar_ms: %{112 => 3_280.0},
         bars: [
           [rest: 0.5, n: {"G3", 0.5, "The"}, n: {"A3", 0.5, "shep-"}, ...],
           ...
@@ -21,6 +23,10 @@ defmodule ChoirCoach.Song do
   Durations are in beats. `{:n, {name, beats, lyric}}` is a sung note,
   `{:rest, beats}` a rest. A lyric starting with `~` continues the previous
   syllable (a slur or tie onto a new pitch).
+
+  `start_ms` is where the first bar falls on the track (default 0). Every bar
+  lasts `beats_per_bar` beats at `tempo_bpm` unless `bar_ms` gives its length
+  in ms (a ritardando, a fermata); its notes stretch proportionally.
   """
 
   alias ChoirCoach.Pitch
@@ -44,7 +50,7 @@ defmodule ChoirCoach.Song do
   @enforce_keys [:title, :part, :tempo_bpm, :beats_per_bar, :notes, :bars]
   defstruct [:title, :part, :clef, :key_name, :tempo_bpm, :beats_per_bar, :notes, :bars]
 
-  @type bar :: %{number: pos_integer(), start_ms: float()}
+  @type bar :: %{number: pos_integer(), start_ms: float(), dur_ms: float()}
   @type t :: %__MODULE__{
           title: String.t(),
           part: atom(),
@@ -62,20 +68,25 @@ defmodule ChoirCoach.Song do
     tempo = Keyword.fetch!(opts, :tempo_bpm)
     beats_per_bar = Keyword.fetch!(opts, :beats_per_bar)
     first_bar = Keyword.fetch!(opts, :first_bar)
-    beat_ms = 60_000.0 / tempo
+    bar_ms = Keyword.get(opts, :bar_ms, %{})
+    regular_bar_ms = beats_per_bar * 60_000.0 / tempo
 
-    {notes, bars} =
+    {notes, bars, _end} =
       opts
       |> Keyword.fetch!(:bars)
       |> Enum.with_index(first_bar)
-      |> Enum.reduce({[], []}, fn {events, number}, {notes, bars} ->
-        bar_start = (number - first_bar) * beats_per_bar * beat_ms
+      |> Enum.reduce({[], [], Keyword.get(opts, :start_ms, 0.0) * 1.0}, fn {events, number},
+                                                                           {notes, bars,
+                                                                            bar_start} ->
         check_bar!(events, number, beats_per_bar)
+        dur = Map.get(bar_ms, number, regular_bar_ms) * 1.0
+        ms_per_beat = dur / beats_per_bar
 
         {bar_notes, _} =
-          Enum.flat_map_reduce(events, 0.0, &place(&1, &2, number, bar_start, beat_ms))
+          Enum.flat_map_reduce(events, 0.0, &place(&1, &2, number, bar_start, ms_per_beat))
 
-        {notes ++ bar_notes, bars ++ [%{number: number, start_ms: bar_start}]}
+        bar = %{number: number, start_ms: bar_start, dur_ms: dur}
+        {[bar_notes | notes], [bar | bars], bar_start + dur}
       end)
 
     %__MODULE__{
@@ -85,8 +96,8 @@ defmodule ChoirCoach.Song do
       key_name: Keyword.get(opts, :key_name, "C major"),
       tempo_bpm: tempo,
       beats_per_bar: beats_per_bar,
-      notes: notes,
-      bars: bars
+      notes: notes |> Enum.reverse() |> List.flatten(),
+      bars: Enum.reverse(bars)
     }
   end
 
@@ -123,11 +134,26 @@ defmodule ChoirCoach.Song do
     {[note], offset + beats}
   end
 
-  @doc "Length of the song in ms (end of its last bar)."
+  @doc "End of the song in ms (end of its last bar)."
   @spec duration_ms(t()) :: float()
-  def duration_ms(%__MODULE__{bars: bars} = song) do
-    %{start_ms: last} = List.last(bars)
-    last + song.beats_per_bar * beat_ms(song)
+  def duration_ms(%__MODULE__{bars: bars}) do
+    %{start_ms: start, dur_ms: dur} = List.last(bars)
+    start + dur
+  end
+
+  @doc "Start of the song's first bar in ms."
+  @spec start_ms(t()) :: float()
+  def start_ms(%__MODULE__{bars: [%{start_ms: start} | _]}), do: start
+
+  @doc "Song times of every beat that starts in `[from_ms, to_ms]`, flagged when it opens a bar."
+  @spec beats_between(t(), number(), number()) :: [{float(), boolean()}]
+  def beats_between(%__MODULE__{bars: bars, beats_per_bar: n}, from_ms, to_ms) do
+    for %{start_ms: s, dur_ms: d} <- bars,
+        s <= to_ms and s + d >= from_ms,
+        i <- 0..(n - 1),
+        t = s + i * d / n,
+        t >= from_ms and t <= to_ms,
+        do: {t, i == 0}
   end
 
   @doc "Milliseconds per beat."
@@ -162,4 +188,24 @@ defmodule ChoirCoach.Song do
     %{start_ms: start} = Enum.find(bars, &(&1.number == number)) || hd(bars)
     start
   end
+
+  @doc "The bar before bar `number`, or nil for the first."
+  @spec bar_before(t(), pos_integer()) :: bar() | nil
+  def bar_before(%__MODULE__{bars: bars}, number), do: Enum.find(bars, &(&1.number == number - 1))
+
+  @doc """
+  The note sounding at `t_ms`, or else the nearest note starting or ending
+  within `margin_ms` of it (an early or late entry); nil in a rest.
+  """
+  @spec note_near(t(), number(), number()) :: Note.t() | nil
+  def note_near(%__MODULE__{notes: notes} = song, t_ms, margin_ms) do
+    note_at(song, t_ms) ||
+      notes
+      |> Enum.map(&{&1, gap(&1, t_ms)})
+      |> Enum.filter(fn {_n, d} -> d <= margin_ms end)
+      |> Enum.min_by(&elem(&1, 1), fn -> {nil, nil} end)
+      |> elem(0)
+  end
+
+  defp gap(note, t), do: max(note.start_ms - t, t - (note.start_ms + note.dur_ms))
 end

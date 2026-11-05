@@ -36,6 +36,36 @@ defmodule ChoirCoach.SongTest do
     assert Song.duration_ms(song()) == 4000.0
   end
 
+  test "a track offset and a stretched bar place notes and beats on the track timeline" do
+    s =
+      Song.build(
+        title: "Test",
+        tempo_bpm: 120,
+        beats_per_bar: 4,
+        first_bar: 1,
+        start_ms: 300.0,
+        # Bar 2 slows to half speed (a ritardando).
+        bar_ms: %{2 => 4000.0},
+        bars: [[n: {"C3", 4, "a"}], [n: {"D3", 2, "b"}, n: {"E3", 2, "c"}], [n: {"F3", 4, "d"}]]
+      )
+
+    assert Enum.map(s.notes, &{&1.start_ms, &1.dur_ms}) ==
+             [{300.0, 2000.0}, {2300.0, 2000.0}, {4300.0, 2000.0}, {6300.0, 2000.0}]
+
+    assert Song.start_ms(s) == 300.0
+    assert Song.duration_ms(s) == 8300.0
+    assert Song.bar_before(s, 3).start_ms == 2300.0
+    assert Song.bar_before(s, 1) == nil
+
+    # Beats inside the stretched bar are 1 s apart; the bar line is flagged.
+    assert Song.beats_between(s, 2000, 5500) == [
+             {2300.0, true},
+             {3300.0, false},
+             {4300.0, false},
+             {5300.0, false}
+           ]
+  end
+
   test "lookups across notes and rests" do
     s = song()
     assert Song.note_at(s, 250) == nil
@@ -45,6 +75,28 @@ defmodule ChoirCoach.SongTest do
     assert Song.next_note(s, 3500) == nil
     assert Song.bar_at(s, 2100).number == 11
     assert Song.bar_start(s, 11) == 2000.0
+  end
+
+  test "readings are folded onto the written octave and gated to the notes" do
+    # C3 (48) sounds 500–1000 ms; 0–500 is a rest.
+    [down, up, wrong, early, rest, silent] =
+      PracticeScreen.align_readings(song(), [
+        {600, 36.2, 0.9},
+        {600, 60.3, 0.9},
+        {600, 51.0, 0.9},
+        # 80 ms before the C3: an early entry, kept and folded.
+        {420, 36.0, 0.9},
+        # 250 ms before it: not the part being sung.
+        {250, 60.0, 0.9},
+        {600, nil, 0.0}
+      ])
+
+    assert_in_delta elem(down, 1), 48.2, 1.0e-9
+    assert_in_delta elem(up, 1), 48.3, 1.0e-9
+    assert elem(wrong, 1) == 51.0
+    assert elem(early, 1) == 48.0
+    assert rest == {250, nil, 0.0}
+    assert silent == {600, nil, 0.0}
   end
 
   describe "current_cents/3" do
@@ -61,6 +113,12 @@ defmodule ChoirCoach.SongTest do
     test "rests and unsure readings are silence" do
       assert PracticeScreen.current_cents(song(), [{250, 48.0, 0.9}], 250) == nil
       assert PracticeScreen.current_cents(song(), [{600, 48.0, 0.1}], 610) == nil
+    end
+
+    test "one dropout isn't a breath, but 150 ms of nothing is" do
+      trace = [{600, 48.2, 0.9}, {610, nil, 0.0}, {620, nil, 0.0}]
+      assert PracticeScreen.current_cents(song(), trace, 630) |> Float.round(6) == 20.0
+      assert PracticeScreen.current_cents(song(), trace, 800) == nil
     end
   end
 
@@ -99,6 +157,12 @@ defmodule ChoirCoach.SongTest do
       [a, b] = runs(trace, 800)
       assert {a.bucket, b.bucket} == {0, 30}
       assert List.last(a.points) == hd(b.points)
+    end
+
+    test "a leap of more than 3 semitones breaks the line instead of drawing a spike" do
+      trace = readings(600, 700, &{&1, 48.0, 0.9}) ++ readings(710, 800, &{&1, 52.0, 0.9})
+      [a, b] = runs(trace, 800)
+      refute List.last(a.points) == hd(b.points)
     end
   end
 end

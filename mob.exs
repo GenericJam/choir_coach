@@ -14,7 +14,8 @@ config :mob_dev,
   mob_dir: Path.join(File.cwd!(), "deps/mob"),
 
   # Path to your Elixir lib dir (e.g. ~/.local/share/mise/installs/elixir/1.18.4-otp-28/lib).
-  elixir_lib: System.get_env("MOB_ELIXIR_LIB", :code.lib_dir(:elixir) |> to_string() |> Path.dirname()),
+  elixir_lib:
+    System.get_env("MOB_ELIXIR_LIB", :code.lib_dir(:elixir) |> to_string() |> Path.dirname()),
 
   # iOS devices and orientations, stamped into the built app's Info.plist
   # (they override ios/Info.plist). ios_target_devices: [:iphone, :ipad] runs
@@ -38,7 +39,9 @@ config :mob_dev,
   # built app's Info.plist as UIApplicationSupportsMultipleScenes. iOS only;
   # Android ignores it. The per-window navigation needs a mob release with
   # Mob.Scene (not released yet, mob#184): keep false until then.
-  multi_window: false
+  multi_window: false,
+  # The audio engine (c_src/choir_audio.c) is AAudio-based: Android only.
+  static_nifs: [%{module: :choir_audio, archs: [:android]}]
 
 # Activated capability plugins (the packages added in mix.exs). Each contributes
 # its native code, permissions, and any demo screens at build time. Drop a name
@@ -67,7 +70,5 @@ config :mob, :trusted_plugins, %{
   mob_mishka: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",
   mob_ash: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg="
 }
-
-
 
 if File.exists?(Path.join(__DIR__, "mob.local.exs")), do: import_config("mob.local.exs")

@@ -1,54 +1,70 @@
 defmodule ChoirCoach.PracticeScreen do
   @moduledoc """
-  The live practice screen for one song section.
+  The live practice screen: plays a rehearsal track, listens to the singer
+  and draws how their pitch compares with the written part.
 
-  Playback is a clock: song time = position when play was pressed + time
-  since. While playing, a frame tick reads the clock, appends the pitch
-  readings since the last frame to the trace, advances the feedback smoother
-  and re-renders. Readings come from `ChoirCoach.FakeSinger` until the audio
-  engine supplies real ones; the trace format is the same either way.
+  Sound and pitch come from a `ChoirCoach.Audio` engine kept in the
+  assigns. While playing, a ~30 fps frame tick reads the engine's position
+  (the song time being heard), drains the pitch readings since the last
+  frame into the trace, advances the feedback smoother and re-renders.
 
-  Controls: restart, back one bar, play / pause, loop the section, and the
-  accompaniment level (kept here for the audio engine; no audio plays yet).
+  Controls: restart, back one bar, play / pause, loop the song, and the
+  accompaniment level. Tapping the part pill cycles the track: the part's
+  rehearsal track, the split track (full choir), or the demo.
   """
 
   use Mob.Screen
 
-  alias ChoirCoach.{ControlsView, FakeSinger, Feedback, Pitch, PracticeView, Song, Style}
+  alias ChoirCoach.{Audio, ControlsView, Feedback, Pitch, PracticeView, Song, Style}
   alias ChoirCoach.Songs.GloriousNight
 
   @frame_ms 33
-  @sample_ms 10
   @recentre_tau_ms 150.0
+  # A reading this close to a written note counts for it (an early or late
+  # entry); further away it's not the part being sung.
+  @note_margin_ms 120
+  # Silence shorter than this (one unsure reading) isn't a breath.
+  @dropout_ms 150
   @header_height 55
   @controls_height 150
   @volume_steps [100, 70, 40, 0]
+  @track_modes [:rehearsal, :split, :demo]
   # Reference artboard, used where the device can't be asked (host tests).
   @fallback_screen {390.0, 844.0}
 
   def mount(params, _session, socket) do
-    song = Map.get_lazy(params, :song, &GloriousNight.verse_excerpt/0)
+    song = Map.get_lazy(params, :song, &GloriousNight.bass/0)
+    tracks = Map.get_lazy(params, :tracks, &GloriousNight.tracks/0)
     {w, h} = Map.get_lazy(params, :screen, &screen_size/0)
+    engine = Audio.engine()
+    mode = hd(Enum.filter(@track_modes, &Map.has_key?(tracks, &1)))
     first = hd(song.notes)
 
-    {:ok,
-     Mob.Socket.assign(socket,
-       song: song,
-       screen_w: w,
-       screen_h: h,
-       playing: false,
-       base_ms: 0.0,
-       started_at: nil,
-       t_ms: 0.0,
-       trace: [],
-       sampled_to: -@sample_ms * 1.0,
-       feedback: Feedback.new(),
-       center_midi: first.midi * 1.0,
-       loop: true,
-       volume: 70,
-       frames: 0,
-       tick_timer: nil
-     )}
+    socket =
+      Mob.Socket.assign(socket,
+        song: song,
+        tracks: tracks,
+        track_mode: mode,
+        engine: engine,
+        audio: song |> engine.new() |> engine.load(tracks[mode]),
+        audio_status: :loading,
+        resume_at: nil,
+        mic: :unknown,
+        listening: :off,
+        screen_w: w,
+        screen_h: h,
+        playing: false,
+        t_ms: 0.0,
+        trace: [],
+        feedback: Feedback.new(),
+        center_midi: first.midi * 1.0,
+        loop: true,
+        volume: 70,
+        frames: 0,
+        tick_timer: nil
+      )
+
+    {:ok, request_microphone(socket)}
   end
 
   def render(assigns) do
@@ -142,10 +158,9 @@ defmodule ChoirCoach.PracticeScreen do
 
   defp header(assigns) do
     song = assigns.song
-    first = hd(song.bars).number
-    last = List.last(song.bars).number
-    subtitle = "Bars #{first}–#{last} · #{song.key_name} · ♩ = #{song.tempo_bpm}"
     header_height = @header_height
+    track_tap = {self(), :track}
+    pill = part_name(song.part) <> " · " <> track_label(assigns.track_mode)
 
     ~MOB"""
     <Row height={header_height} padding_left={20} padding_right={20} align={:center}>
@@ -158,15 +173,21 @@ defmodule ChoirCoach.PracticeScreen do
           max_lines={1}
         />
         <Text
-          text={subtitle}
+          text={subtitle(assigns)}
           text_size={Style.type(:subtitle)}
           text_color={Style.text_tertiary()}
           max_lines={1}
         />
       </Column>
-      <Box background={0x24FFFFFF} corner_radius={16} padding={8} fill_width={false}>
+      <Box
+        background={0x24FFFFFF}
+        corner_radius={16}
+        padding={8}
+        fill_width={false}
+        on_tap={track_tap}
+      >
         <Text
-          text={"● " <> part_name(song.part)}
+          text={"● " <> pill}
           text_size={Style.type(:status)}
           text_color={Style.text_primary()}
           font_weight="bold"
@@ -174,6 +195,21 @@ defmodule ChoirCoach.PracticeScreen do
       </Box>
     </Row>
     """
+  end
+
+  @doc false
+  # The header's second line: what's wrong if anything is, else the song facts.
+  def subtitle(%{audio_status: :loading}), do: "Loading the track…"
+
+  def subtitle(%{audio_status: {:error, reason}}),
+    do: "Can't play this track (#{inspect(reason)})"
+
+  def subtitle(%{mic: :denied}), do: "Microphone off: allow it in Settings for feedback"
+  def subtitle(%{listening: {:error, reason}}), do: "Microphone unavailable (#{inspect(reason)})"
+  def subtitle(%{listening: :playback}), do: "Test mode: listening to the track itself"
+
+  def subtitle(%{song: song}) do
+    "Bars #{hd(song.bars).number}–#{List.last(song.bars).number} · #{song.key_name} · ♩ = #{song.tempo_bpm}"
   end
 
   # ── Events ───────────────────────────────────────────────────────────────
@@ -188,12 +224,12 @@ defmodule ChoirCoach.PracticeScreen do
 
   def handle_info({:tap, :back_bar}, socket) do
     a = socket.assigns
-    t = current_ms(a)
-    bar = Song.bar_at(a.song, t)
+    bar = Song.bar_at(a.song, a.t_ms)
+    previous = Song.bar_before(a.song, bar.number)
     # Within the first beat of a bar, step to the previous bar's start.
     target =
-      if t - bar.start_ms < Song.beat_ms(a.song),
-        do: max(bar.start_ms - a.song.beats_per_bar * Song.beat_ms(a.song), 0.0),
+      if a.t_ms - bar.start_ms < bar.dur_ms / a.song.beats_per_bar,
+        do: if(previous, do: previous.start_ms, else: bar.start_ms),
         else: bar.start_ms
 
     {:noreply, seek(socket, target)}
@@ -204,14 +240,62 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   def handle_info({:tap, :volume}, socket) do
-    {:noreply, Mob.Socket.assign(socket, :volume, next_volume(socket.assigns.volume))}
+    socket = Mob.Socket.assign(socket, :volume, next_volume(socket.assigns.volume))
+    {:noreply, apply_mix(socket)}
+  end
+
+  def handle_info({:tap, :track}, socket) do
+    a = socket.assigns
+    modes = Enum.filter(@track_modes, &Map.has_key?(a.tracks, &1))
+    next = Enum.at(modes, rem(Enum.find_index(modes, &(&1 == a.track_mode)) + 1, length(modes)))
+    resume = if a.playing, do: a.t_ms
+    socket = if a.playing, do: pause(socket), else: socket
+
+    {:noreply,
+     Mob.Socket.assign(socket,
+       track_mode: next,
+       audio: a.engine.load(socket.assigns.audio, a.tracks[next]),
+       audio_status: :loading,
+       listening: :off,
+       resume_at: resume
+     )}
+  end
+
+  def handle_info({:choir_audio, :ready, _info}, socket) do
+    socket = socket |> Mob.Socket.assign(:audio_status, :ready) |> apply_mix() |> maybe_listen()
+
+    case socket.assigns.resume_at do
+      nil -> {:noreply, socket}
+      t -> {:noreply, socket |> Mob.Socket.assign(t_ms: t, resume_at: nil) |> play()}
+    end
+  end
+
+  def handle_info({:choir_audio, :decoded, _info}, socket), do: {:noreply, socket}
+
+  def handle_info({:choir_audio, :load_error, reason}, socket) do
+    {:noreply, Mob.Socket.assign(socket, :audio_status, {:error, reason})}
+  end
+
+  def handle_info({:permission, :microphone, result}, socket) do
+    {:noreply, socket |> Mob.Socket.assign(:mic, result) |> maybe_listen()}
+  end
+
+  # Jump to a song time (ms), keeping play / pause as it is.
+  def handle_info({:seek, ms}, socket) when is_number(ms) do
+    {:noreply, seek(socket, max(ms * 1.0, 0.0))}
+  end
+
+  # Device test hook: analyse the track itself instead of the microphone
+  # (`send(pid, {:listen, :playback})`), or go back to `:mic`.
+  def handle_info({:listen, source}, socket) when source in [:mic, :playback] do
+    {:noreply, listen(socket, source)}
   end
 
   def handle_info(:tick, socket) do
     socket = Mob.Socket.assign(socket, :tick_timer, nil)
 
     if socket.assigns.playing do
-      {:noreply, socket |> advance(now_ms()) |> schedule_tick()}
+      {:noreply, socket |> advance() |> schedule_tick()}
     else
       {:noreply, socket}
     end
@@ -219,69 +303,88 @@ defmodule ChoirCoach.PracticeScreen do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  # ── Clock ────────────────────────────────────────────────────────────────
+  # ── Playback ─────────────────────────────────────────────────────────────
+
+  defp play(%{assigns: %{audio_status: status}} = socket) when status != :ready, do: socket
 
   defp play(socket) do
     a = socket.assigns
     start = if a.t_ms >= Song.duration_ms(a.song), do: loop_start(a), else: a.t_ms
-    keep_awake(true)
 
-    socket
-    |> Mob.Socket.assign(playing: true, base_ms: start, started_at: now_ms(), t_ms: start)
-    |> reset_trace(start)
-    |> schedule_tick()
+    case a.engine.play(a.audio, start) do
+      {:ok, audio} ->
+        keep_awake(true)
+
+        socket
+        |> Mob.Socket.assign(audio: audio, playing: true, t_ms: start)
+        |> reset_trace()
+        |> schedule_tick()
+
+      {:error, reason, audio} ->
+        Mob.Socket.assign(socket, audio: audio, audio_status: {:error, reason})
+    end
   end
 
   defp pause(socket) do
+    a = socket.assigns
     keep_awake(false)
-    t = current_ms(socket.assigns)
+    audio = a.engine.pause(a.audio)
 
     socket
     |> cancel_tick()
-    |> Mob.Socket.assign(playing: false, base_ms: t, started_at: nil, t_ms: t)
+    |> Mob.Socket.assign(audio: audio, playing: false)
   end
 
   defp seek(socket, t) do
-    started = if socket.assigns.playing, do: now_ms(), else: nil
-
-    socket
-    |> Mob.Socket.assign(base_ms: t, started_at: started, t_ms: t)
-    |> reset_trace(t)
+    if socket.assigns.playing,
+      do: socket |> Mob.Socket.assign(:t_ms, t) |> play(),
+      else: socket |> Mob.Socket.assign(:t_ms, t) |> reset_trace()
   end
 
-  defp reset_trace(socket, t) do
-    Mob.Socket.assign(socket, trace: [], sampled_to: t - @sample_ms, feedback: Feedback.new())
+  defp reset_trace(socket), do: Mob.Socket.assign(socket, trace: [], feedback: Feedback.new())
+
+  defp apply_mix(socket) do
+    a = socket.assigns
+    Mob.Socket.assign(socket, :audio, a.engine.set_mix(a.audio, 1.0, a.volume / 100))
   end
 
-  defp current_ms(%{playing: true, base_ms: base, started_at: started}),
-    do: base + (now_ms() - started)
+  defp request_microphone(socket) do
+    if device_calls?(),
+      do: Mob.Permissions.request(socket, :microphone),
+      else: Mob.Socket.assign(socket, :mic, :granted)
+  end
 
-  defp current_ms(%{t_ms: t}), do: t
+  defp maybe_listen(%{assigns: %{audio_status: :ready, mic: :granted, listening: :off}} = socket),
+    do: listen(socket, :mic)
+
+  defp maybe_listen(socket), do: socket
+
+  defp listen(socket, source) do
+    a = socket.assigns
+
+    case a.engine.listen(a.audio, source) do
+      {:ok, audio} ->
+        Mob.Socket.assign(socket, audio: audio, listening: source)
+
+      {:error, reason, audio} ->
+        Mob.Socket.assign(socket, audio: audio, listening: {:error, reason})
+    end
+  end
 
   @doc false
-  # One frame: read the clock, wrap or stop at the end, sample, smooth.
-  def advance(socket, now) do
+  # One frame: read the position, wrap or stop at the end, take the readings,
+  # smooth.
+  def advance(socket) do
     a = socket.assigns
-    t = a.base_ms + (now - a.started_at)
+    {_status, t} = a.engine.position(a.audio)
     duration = Song.duration_ms(a.song)
 
     cond do
       t >= duration and a.loop ->
-        start = loop_start(a)
-
-        socket
-        |> Mob.Socket.assign(base_ms: start, started_at: now, t_ms: start)
-        |> reset_trace(start)
+        socket |> Mob.Socket.assign(:t_ms, loop_start(a)) |> play()
 
       t >= duration ->
-        keep_awake(false)
-
-        Mob.Socket.assign(socket,
-          playing: false,
-          base_ms: duration,
-          started_at: nil,
-          t_ms: duration
-        )
+        socket |> pause() |> Mob.Socket.assign(:t_ms, duration)
 
       true ->
         step(socket, t)
@@ -290,49 +393,75 @@ defmodule ChoirCoach.PracticeScreen do
 
   defp step(socket, t) do
     a = socket.assigns
-    {trace, sampled_to} = sample_until(a.song, a.trace, a.sampled_to, t)
+    {readings, audio} = a.engine.readings(a.audio)
     keep_from = t - Style.past_seconds() * 1000 - 100
-    trace = Enum.drop_while(trace, fn {ts, _m, _c} -> ts < keep_from end)
+
+    trace =
+      Enum.drop_while(a.trace ++ align_readings(a.song, readings), fn {ts, _m, _c} ->
+        ts < keep_from
+      end)
+
     dt = max(t - a.t_ms, 0.0)
 
     Mob.Socket.assign(socket,
+      audio: audio,
       t_ms: t,
       trace: trace,
-      sampled_to: sampled_to,
       feedback: smooth(a.feedback, current_cents(a.song, trace, t), t),
       center_midi: recentre(a.center_midi, a.song, t, dt),
       frames: a.frames + 1
     )
   end
 
-  defp sample_until(song, trace, sampled_to, t) do
-    times =
-      Stream.iterate(sampled_to + @sample_ms, &(&1 + @sample_ms)) |> Enum.take_while(&(&1 <= t))
+  @doc false
+  # Readings as the screen uses them:
+  #   * more than 120 ms from any written note is treated as
+  #     silence — whatever was heard (accompaniment bleed, a cough) isn't the
+  #     part being sung;
+  #   * 9½ or more semitones from the nearby note is an octave slip — the
+  #     detector's, or a bass dropping to the octave below — so it's moved by
+  #     whole octaves to the copy nearest the written note. Wrong notes (a
+  #     few semitones off) are left alone.
+  def align_readings(song, readings) do
+    Enum.map(readings, fn
+      {ts, midi, conf} = reading when is_number(midi) ->
+        case Song.note_near(song, ts, @note_margin_ms) do
+          nil ->
+            {ts, nil, 0.0}
 
-    new =
-      Enum.map(times, fn ts ->
-        case FakeSinger.sample(song, ts) do
-          nil -> {ts, nil, 0.0}
-          %{midi: m, confidence: c} -> {ts, m, c}
+          %{midi: written} when abs(midi - written) >= 9.5 ->
+            {ts, midi - 12 * round((midi - written) / 12), conf}
+
+          _ ->
+            reading
         end
-      end)
 
-    {trace ++ new, List.last(times) || sampled_to}
+      reading ->
+        reading
+    end)
   end
 
   @doc false
-  # Error of the latest confident reading against the note sung when it was
-  # taken; nil in rests or when nothing confident is heard. `:stale` when the
-  # reading predates the note now sounding (the frame landed on a note
-  # change): the smoother holds its state rather than reading a
-  # several-semitone miss or a one-frame silence.
+  # Error of the latest confident reading (from the last 150 ms, so
+  # one unsure reading isn't taken for a breath) against the note sung when
+  # it was taken; nil in rests or when nothing confident has been heard.
+  # `:stale` when that reading predates the note now sounding (the frame
+  # landed on a note change): the smoother holds its state rather than
+  # reading a several-semitone miss.
   def current_cents(song, trace, t) do
     with %{} = note <- Song.note_at(song, t),
-         {ts, midi, conf} when is_number(midi) and conf >= 0.2 <- List.last(trace) do
+         {ts, midi, _conf} <- latest_voiced(trace, t - @dropout_ms) do
       if Song.note_at(song, ts) == note, do: Pitch.cents(midi, note.midi), else: :stale
     else
       _ -> nil
     end
+  end
+
+  defp latest_voiced(trace, since) do
+    trace
+    |> Enum.reverse()
+    |> Enum.take_while(fn {ts, _m, _c} -> ts >= since end)
+    |> Enum.find(fn {_ts, midi, conf} -> is_number(midi) and conf >= 0.2 end)
   end
 
   defp smooth(feedback, :stale, _t), do: feedback
@@ -363,8 +492,6 @@ defmodule ChoirCoach.PracticeScreen do
     Mob.Socket.assign(socket, :tick_timer, nil)
   end
 
-  defp now_ms, do: System.monotonic_time(:millisecond)
-
   defp loop_start(_assigns), do: 0.0
 
   defp canvas_height(assigns, sa) do
@@ -383,11 +510,15 @@ defmodule ChoirCoach.PracticeScreen do
     Enum.at(@volume_steps, rem(i + 1, length(@volume_steps)))
   end
 
+  defp track_label(:rehearsal), do: "Rehearsal"
+  defp track_label(:split), do: "Choir"
+  defp track_label(:demo), do: "Demo"
+
   defp part_name(:bass), do: "Bass"
   defp part_name(part), do: part |> Atom.to_string() |> String.capitalize()
 
   defp clock(ms) do
-    s = trunc(ms / 1000)
+    s = trunc(max(ms, 0) / 1000)
     "#{div(s, 60)}:#{s |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")}"
   end
 
