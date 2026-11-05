@@ -8,3 +8,7 @@ config :choir_coach, ecto_repos: [ChoirCoach.Repo]
 # Wire the Repo into Mob.ScreenState so screens using `vsn:` get automatic
 # state persistence. Remove this line to disable screen state persistence.
 config :mob, :repo, ChoirCoach.Repo
+
+# Host tests run without the Mob NIF, so screens skip device calls
+# (screen size, keep-awake) there and fall back to the reference artboard.
+config :choir_coach, device_calls: config_env() != :test

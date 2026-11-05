@@ -37,3 +37,40 @@ loading with `start_async/3` / `handle_async/3`), `components`, `events`,
 
 If you use [usage_rules](https://hexdocs.pm/usage_rules), `mix usage_rules.sync`
 picks up `deps/mob/usage-rules.md`.
+
+## What this app is
+
+A choir practice coach: it plays a rehearsal track and shows, on a scrolling
+note timeline, whether the singer is above or below the written note. Bass
+part first. The visual design is the Claude Design handoff "Choir Pitch
+Coach" (reference artboard 390 × 844 pt); its tokens live in
+`ChoirCoach.Style`.
+
+- `ChoirCoach.Song` — a voice part as timed notes, built bar by bar from the
+  score (`Song.build/1` rejects a bar whose beats don't add up).
+  `ChoirCoach.Songs.*` hold transcriptions.
+- `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
+  trace, smoothed feedback) → `Mob.Canvas` ops. `ChoirCoach.ControlsView` draws
+  the transport icons and progress track.
+- `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
+  wording, following the handoff's motion rules.
+- `ChoirCoach.PracticeScreen` — playback clock, ~30 fps frame tick, trace
+  buffer. Pitch readings come from `ChoirCoach.FakeSinger` until the audio
+  engine exists; the trace format (`{t_ms, midi | nil, confidence}`) is what
+  the engine must produce.
+
+## Working on it
+
+- Run mix through mise (`mise exec -- mix …`): `.tool-versions` pins zig
+  0.17.0, and a dev build earlier on the PATH fails the native build.
+- Android phone: `mix mob.deploy --android --device <serial>`, then restart
+  with `mix mob.connect --no-iex --android-only --device <serial>`. Without
+  `--android-only --device` it restarts the app on every iPhone and simulator
+  it finds. A hot push keeps the old screen process; restart after changing
+  the screen's assigns.
+- Scripts connecting over dist need the project cookie:
+  `Node.set_cookie(MobDev.DistCookie.for_project!())`.
+- Mob's root already insets the safe area; don't pad it again.
+- `scripts/frame_rate.exs` measures frame rate on the device. Moto g power
+  2021 baseline (fake singer): ~29 fps, BEAM 14 ms p50 per frame, native apply
+  21 ms p50 / 36 ms p95, ~17% of frame intervals over 50 ms.

@@ -1,0 +1,905 @@
+defmodule ChoirCoach.PracticeView do
+  @moduledoc """
+  Draws the live practice canvas: the staff strip, the scrolling note roll,
+  the sung-pitch trace with its feedback glow, and the floating status /
+  lyric / note-name cluster.
+
+  Pure: `ops/1` turns one `frame` into a list of `Mob.Canvas` ops. Layers go
+  back to front in the handoff's order — background, staff, lanes, note bars,
+  active note, playhead and target line, glow / stem / trace / head /
+  chevrons, edge fades and cluster, bottom scrim.
+
+  Time runs right to left under a fixed playhead at 37.5 % of the width,
+  showing 1.75 s of the past and 2.9 s of the future. Pitch runs bottom to
+  top at a fixed dp per semitone around `center_midi`.
+
+  Mob's canvas has no gradients, so radial glows and edge fades are stacks
+  of translucent shapes.
+  """
+
+  import Mob.Canvas
+
+  alias ChoirCoach.{Feedback, Pitch, Song, Style}
+
+  @type sample :: {integer() | float(), float() | nil, float()}
+
+  @type frame :: %{
+          song: Song.t(),
+          t_ms: float(),
+          width: float(),
+          height: float(),
+          semitone: float(),
+          center_midi: float(),
+          trace: [sample()],
+          feedback: Feedback.t(),
+          now_ms: integer()
+        }
+
+  # Staff strip geometry inside the canvas (dp).
+  @staff_top 20.0
+  # Two lyric rows under the staff; a syllable drops to the second row when
+  # it would run into its neighbour on the first.
+  @staff_lyric_rows [72.0, 87.0]
+  @strip_height 106.0
+
+  # Bass clef: bottom line G2, middle line D3, top line A3.
+  @bass_bottom_line Pitch.staff_step(43)
+  @bass_middle_line Pitch.staff_step(50)
+  @bass_top_line Pitch.staff_step(57)
+
+  @doc "All canvas ops for one frame."
+  @spec ops(frame()) :: [map()]
+  def ops(frame) do
+    g = geometry(frame)
+
+    List.flatten([
+      rect(0, 0, g.width, g.height, color: Style.bg(), fill: true),
+      lanes(frame, g),
+      note_bars(frame, g),
+      playhead(frame, g),
+      voice(frame, g),
+      edge_fades(g),
+      staff(frame, g),
+      cluster(frame, g),
+      bottom_scrim(g)
+    ])
+  end
+
+  @doc """
+  Geometry shared by every layer: the time and pitch scales and the
+  playhead / roll positions for this canvas size. The time scale is the
+  design's (width × 0.625 ÷ 2.9 s per second) unless that would make a beat
+  narrower than `Style.min_beat_dp/0`.
+  """
+  @spec geometry(frame()) :: map()
+  def geometry(%{width: w, height: h} = frame) do
+    roll_top = @strip_height
+    playhead_x = w * Style.playhead_fraction()
+    design_pps = (w - playhead_x) / Style.future_seconds()
+    pps = max(design_pps, Style.min_beat_dp() * frame.song.tempo_bpm / 60)
+
+    %{
+      width: w,
+      height: h,
+      playhead_x: playhead_x,
+      px_per_ms: pps / 1000.0,
+      roll_top: roll_top,
+      center_y: roll_top + 0.4545 * (h - roll_top),
+      semitone: frame.semitone,
+      center_midi: frame.center_midi,
+      from_ms: frame.t_ms - playhead_x / pps * 1000,
+      to_ms: frame.t_ms + (w - playhead_x) / pps * 1000,
+      t_ms: frame.t_ms
+    }
+  end
+
+  # Coordinates are rounded to 0.1 dp: invisible on screen, and it keeps each
+  # frame's JSON to a fraction of its full-precision size.
+  @doc "x position of song time `t` (ms)."
+  def x_of(g, t), do: Float.round(g.playhead_x + (t - g.t_ms) * g.px_per_ms, 1)
+
+  @doc "y position of a (fractional) MIDI pitch in the roll."
+  def y_of(g, midi), do: Float.round(g.center_y - (midi - g.center_midi) * g.semitone, 1)
+
+  # ── Lanes: semitone lines, beat and bar lines, active band ──────────────
+
+  defp lanes(frame, g) do
+    lowest = g.center_midi - (g.height - g.center_y) / g.semitone
+    highest = g.center_midi + (g.center_y - g.roll_top) / g.semitone
+
+    semitones =
+      for m <- floor(lowest)..ceil(highest) do
+        y = y_of(g, m + 0.5)
+
+        line(0, y, g.width, y,
+          color: Style.white(),
+          width: 1,
+          opacity: Style.alpha(:semitone_line)
+        )
+      end
+
+    beat_ms = Song.beat_ms(frame.song)
+    bar_starts = MapSet.new(frame.song.bars, &round(&1.start_ms))
+    first_beat = ceil(max(g.from_ms, 0) / beat_ms)
+    last_beat = floor(min(g.to_ms, Song.duration_ms(frame.song)) / beat_ms)
+
+    beats =
+      for b <- first_beat..last_beat//1 do
+        t = b * beat_ms
+        x = x_of(g, t)
+        alpha = if MapSet.member?(bar_starts, round(t)), do: :bar_line, else: :beat_line
+
+        line(x, g.roll_top, x, g.height,
+          color: Style.white(),
+          width: 1,
+          opacity: Style.alpha(alpha)
+        )
+      end
+
+    band =
+      case Song.note_at(frame.song, frame.t_ms) do
+        nil ->
+          []
+
+        note ->
+          y = y_of(g, note.midi)
+          h = g.semitone
+
+          rect(0, y - h / 2, g.width, h,
+            color: Style.white(),
+            fill: true,
+            opacity: Style.alpha(:active_band)
+          )
+      end
+
+    [semitones, beats, band]
+  end
+
+  # ── Note bars and the syllables beneath them ─────────────────────────────
+
+  defp note_bars(frame, g) do
+    color = feedback_color(frame.feedback)
+
+    placed =
+      frame.song
+      |> Song.notes_between(g.from_ms, g.to_ms)
+      |> Enum.map(fn note ->
+        x0 = x_of(g, note.start_ms)
+        x1 = x_of(g, note.start_ms + note.dur_ms) - Style.note_gap()
+
+        %{
+          note: note,
+          state: note_state(note, frame.t_ms),
+          x: x0,
+          y: y_of(g, note.midi) - Style.note_bar_height() / 2,
+          w: max(x1 - x0, Style.note_bar_height())
+        }
+      end)
+
+    [Enum.map(placed, &bar_shape(&1.state, &1.x, &1.y, &1.w, color, g)), roll_syllables(placed)]
+  end
+
+  defp note_state(note, t) do
+    cond do
+      note.start_ms + note.dur_ms <= t -> :past
+      note.start_ms > t -> :future
+      true -> :active
+    end
+  end
+
+  defp bar_shape(:past, x, y, w, _color, _g),
+    do: plain_bar(x, y, w, :note_past_fill, :note_past_stroke)
+
+  defp bar_shape(:future, x, y, w, _color, _g),
+    do: plain_bar(x, y, w, :note_future_fill, :note_future_stroke)
+
+  defp bar_shape(:active, x, y, w, nil, _g),
+    do: plain_bar(x, y, w, :note_future_fill, :note_future_stroke)
+
+  defp bar_shape(:active, x, y, w, color, g) do
+    h = Style.note_bar_height()
+    r = Style.note_bar_radius()
+    sung = min(max(g.playhead_x - x, 0), w)
+
+    [
+      rect(x, y, w, h,
+        color: color,
+        fill: true,
+        radius: r,
+        opacity: Style.alpha(:note_active_fill)
+      ),
+      if(sung > 0,
+        do:
+          rect(x, y, max(sung, h), h,
+            color: color,
+            fill: true,
+            radius: r,
+            opacity: Style.alpha(:note_active_sung)
+          ),
+        else: []
+      ),
+      rect(x, y, w, h,
+        color: color,
+        width: 1.5,
+        radius: r,
+        opacity: Style.alpha(:note_active_stroke)
+      )
+    ]
+  end
+
+  defp plain_bar(x, y, w, fill_alpha, stroke_alpha) do
+    h = Style.note_bar_height()
+    r = Style.note_bar_radius()
+
+    [
+      rect(x, y, w, h,
+        color: Style.neutral(),
+        fill: true,
+        radius: r,
+        opacity: Style.alpha(fill_alpha)
+      ),
+      rect(x, y, w, h,
+        color: Style.neutral(),
+        width: 1,
+        radius: r,
+        opacity: Style.alpha(stroke_alpha)
+      )
+    ]
+  end
+
+  # Syllables under their bars, left to right, skipping any that would
+  # overlap one already drawn. The syllable being sung is always drawn; the
+  # staff and the big lyric already show every word.
+  defp roll_syllables(placed) do
+    labels =
+      for %{note: %{slur: false} = note} = p <- placed do
+        active = p.state == :active
+        size = Style.type(if active, do: :syllable_active, else: :syllable)
+        s = display_lyric(note.lyric)
+        x = p.x + 6
+        y = p.y + Style.note_bar_height() + 4
+        op = text(x, y, s, syllable_style(active, size))
+        %{active: active, box: {x, y, x + text_width(s, size), y + size}, op: op}
+      end
+
+    reserved = for %{active: true, box: box} <- labels, do: box
+
+    labels
+    |> Enum.reduce({[], reserved}, fn label, {ops, taken} ->
+      cond do
+        label.active -> {[label.op | ops], taken}
+        Enum.any?(taken, &overlap?(&1, label.box)) -> {ops, taken}
+        true -> {[label.op | ops], [label.box | taken]}
+      end
+    end)
+    |> elem(0)
+  end
+
+  defp syllable_style(true, size), do: [color: Style.text_primary(), size: size, weight: :bold]
+  defp syllable_style(false, size), do: [color: Style.text_syllable(), size: size]
+
+  defp overlap?({ax0, ay0, ax1, ay1}, {bx0, by0, bx1, by1}) do
+    ax0 < bx1 + 3 and bx0 < ax1 + 3 and ay0 < by1 and by0 < ay1
+  end
+
+  # ── Playhead and target line ─────────────────────────────────────────────
+
+  defp playhead(frame, g) do
+    x = g.playhead_x
+
+    base =
+      line(x, g.roll_top, x, g.height,
+        color: Style.playhead(),
+        width: 1.5,
+        opacity: Style.alpha(:playhead_line)
+      )
+
+    case Song.note_at(frame.song, frame.t_ms) do
+      nil ->
+        base
+
+      note ->
+        y = y_of(g, note.midi)
+        x0 = x_of(g, note.start_ms)
+
+        [
+          base,
+          line(x, y - 70, x, y + 70,
+            color: Style.playhead(),
+            width: 2,
+            opacity: Style.alpha(:playhead_core)
+          ),
+          line(x0 + 8, y, x, y,
+            color: Style.playhead(),
+            width: 1.5,
+            opacity: Style.alpha(:target_tail)
+          ),
+          line(x, y, x + 30, y,
+            color: Style.playhead(),
+            width: 2,
+            cap: :round,
+            opacity: Style.alpha(:target_line)
+          )
+        ]
+    end
+  end
+
+  # ── Voice: glow, stem, trace, head, chevrons ─────────────────────────────
+
+  defp voice(frame, g) do
+    trace = trace(frame, g)
+
+    case {frame.feedback.cents, latest(frame.trace), Song.note_at(frame.song, frame.t_ms)} do
+      {cents, {_t, midi, conf}, %{} = note}
+      when is_number(cents) and is_number(midi) and conf >= 0.2 ->
+        color = Style.cents_color(frame.feedback.color_cents)
+        head_y = y_of(g, midi)
+        target_y = y_of(g, note.midi)
+        x = g.playhead_x
+
+        [
+          glow(
+            x,
+            head_y,
+            Feedback.glow_radius(frame.feedback, frame.now_ms),
+            frame.feedback.color_cents,
+            color
+          ),
+          stem(x, target_y, head_y, cents, color),
+          trace,
+          head(x, head_y, color),
+          chevrons(x + 16, head_y, frame.feedback.status, color)
+        ]
+
+      _ ->
+        trace
+    end
+  end
+
+  # Radial gradient (0 % α → 55 % α·0.4 → 100 % 0) as five stacked discs.
+  @glow_layers [{1.0, 0.10}, {0.80, 0.13}, {0.62, 0.17}, {0.45, 0.25}, {0.30, 0.35}]
+
+  defp glow(x, y, radius, cents, color) do
+    {_r, alpha} = Style.glow(cents)
+
+    Enum.map(@glow_layers, fn {f, a} ->
+      circle(x, y, radius * f, color: color, fill: true, opacity: alpha * a)
+    end)
+  end
+
+  defp stem(x, target_y, head_y, cents, color) when abs(cents) > 10 do
+    line(x, target_y, x, head_y, color: color, width: 2, opacity: Style.alpha(:stem))
+  end
+
+  defp stem(_x, _target_y, _head_y, _cents, _color), do: []
+
+  defp head(x, y, color) do
+    [
+      circle(x, y, Style.head_halo_radius(),
+        color: color,
+        fill: true,
+        opacity: Style.alpha(:head_halo)
+      ),
+      circle(x, y, Style.head_radius() + Style.head_ring_width(), color: Style.bg(), fill: true),
+      circle(x, y, Style.head_radius(), color: color, fill: true)
+    ]
+  end
+
+  defp chevrons(x, y, {dir, amount}, color) do
+    count = if amount == :far, do: 2, else: 1
+    sign = if dir == :high, do: -1, else: 1
+
+    for i <- 0..(count - 1) do
+      cy = y + sign * (2 + i * 6)
+      chevron(x, cy, sign, color)
+    end
+  end
+
+  defp chevrons(_x, _y, _status, _color), do: []
+
+  # A 10 dp chevron pointing down (sign 1) or up (sign -1).
+  defp chevron(x, y, sign, color) do
+    path([{x - 5, y - sign * 2.5}, {x, y + sign * 2.5}, {x + 5, y - sign * 2.5}],
+      color: color,
+      width: 2,
+      cap: :round,
+      join: :round
+    )
+  end
+
+  @doc """
+  Split the visible trace into drawable runs. Samples with confidence ≥ 0.5
+  form solid runs coloured by their error against the note sung at the time
+  (bucketed to 5¢ so one colour is one path); 0.2–0.5 form thin dotted runs;
+  below 0.2, or silence, is a gap.
+  """
+  @spec trace_runs(frame(), map()) :: [
+          %{style: :solid | :dotted, bucket: integer() | nil, points: list()}
+        ]
+  def trace_runs(frame, g) do
+    # Readings arrive every 10 ms; every other one is plenty for a 4 dp line.
+    frame.trace
+    |> Enum.filter(fn {t, _m, _c} -> t >= g.from_ms and t <= g.t_ms end)
+    |> Enum.take_every(2)
+    |> Enum.map(&classify_sample(&1, frame.song, g))
+    |> Enum.chunk_while(nil, &chunk_run/2, &finish_run/1)
+    |> Enum.filter(&match?(%{points: [_, _ | _]}, &1))
+  end
+
+  defp classify_sample({_t, nil, _c}, _song, _g), do: :gap
+  defp classify_sample({_t, _m, c}, _song, _g) when c < 0.2, do: :gap
+
+  defp classify_sample({t, midi, c}, song, g) do
+    point = {x_of(g, t), y_of(g, midi)}
+
+    bucket =
+      case Song.note_at(song, t) do
+        nil ->
+          nil
+
+        note ->
+          (Pitch.cents(midi, note.midi) / 5) |> round() |> Kernel.*(5) |> max(-50) |> min(50)
+      end
+
+    %{style: if(c < 0.5, do: :dotted, else: :solid), bucket: bucket, point: point}
+  end
+
+  defp chunk_run(:gap, nil), do: {:cont, nil}
+  defp chunk_run(:gap, run), do: {:cont, finalize(run), nil}
+
+  defp chunk_run(s, nil), do: {:cont, %{style: s.style, bucket: s.bucket, points: [s.point]}}
+
+  defp chunk_run(s, %{style: style, bucket: bucket} = run)
+       when s.style == style and s.bucket == bucket do
+    {:cont, %{run | points: [s.point | run.points]}}
+  end
+
+  # A colour or style change starts a new run that shares the joining point,
+  # so the line stays continuous.
+  defp chunk_run(s, run) do
+    {:cont, finalize(%{run | points: [s.point | run.points]}),
+     %{style: s.style, bucket: s.bucket, points: [s.point]}}
+  end
+
+  defp finish_run(nil), do: {:cont, nil}
+  defp finish_run(run), do: {:cont, finalize(run), nil}
+
+  defp finalize(run), do: %{run | points: Enum.reverse(run.points)}
+
+  defp trace(frame, g) do
+    frame
+    |> trace_runs(g)
+    |> Enum.map(fn
+      %{style: :dotted, points: pts} ->
+        path(pts,
+          color: Style.neutral(),
+          width: Style.trace_low_confidence_width(),
+          dash: [2, 4],
+          cap: :round,
+          opacity: Style.alpha(:trace_low_confidence)
+        )
+
+      %{bucket: bucket, points: pts} ->
+        color = if bucket, do: Style.cents_color(bucket), else: Style.neutral()
+        width = if bucket, do: Style.trace_width(bucket), else: Style.trace_core_width()
+
+        [
+          path(pts,
+            color: color,
+            width: Style.trace_underlay_width(),
+            cap: :round,
+            join: :round,
+            opacity: Style.alpha(:trace_underlay)
+          ),
+          path(pts, color: color, width: width, cap: :round, join: :round)
+        ]
+    end)
+  end
+
+  defp latest([]), do: nil
+  defp latest(trace), do: List.last(trace)
+
+  # ── Edge fades and bottom scrim (stacked translucent strips) ─────────────
+
+  defp edge_fades(g) do
+    left = fade_strips(0, Style.edge_fade_left(), g.roll_top, g.height - g.roll_top, :fade_out)
+
+    right =
+      fade_strips(
+        g.width - Style.edge_fade_right(),
+        Style.edge_fade_right(),
+        g.roll_top,
+        g.height - g.roll_top,
+        :fade_in
+      )
+
+    [left, right]
+  end
+
+  defp fade_strips(x, w, y, h, direction) do
+    n = 5
+    sw = w / n
+
+    for i <- 0..(n - 1) do
+      step = if direction == :fade_out, do: n - i, else: i + 1
+      rect(x + i * sw, y, sw + 0.5, h, color: Style.bg(), fill: true, opacity: 0.9 * step / n)
+    end
+  end
+
+  defp bottom_scrim(g) do
+    n = 6
+    h = 48.0
+    sh = h / n
+
+    for i <- 0..(n - 1) do
+      rect(0, g.height - h + i * sh, g.width, sh + 0.5,
+        color: Style.bg(),
+        fill: true,
+        opacity: 0.92 * (i + 1) / n
+      )
+    end
+  end
+
+  # ── Staff strip ──────────────────────────────────────────────────────────
+
+  defp staff(frame, g) do
+    clef_w = Style.staff_clef_zone()
+    notes = Song.notes_between(frame.song, g.from_ms - 200, g.to_ms)
+    active = Song.note_at(frame.song, frame.t_ms)
+    color = feedback_color(frame.feedback)
+
+    [
+      rect(0, 0, g.width, @strip_height, color: Style.bg(), fill: true),
+      active_column(active, color, g),
+      staff_lines(0, g.width),
+      staff_bar_lines(frame.song, g),
+      rests(frame.song, g),
+      Enum.map(notes, &staff_note(&1, active, color, g)),
+      staff_lyrics(notes, active, g),
+      rect(0, 0, clef_w, @strip_height, color: Style.bg(), fill: true),
+      fade_strips(clef_w, Style.staff_clef_fade(), 0, @strip_height, :fade_out),
+      staff_lines(0, clef_w),
+      bass_clef()
+    ]
+  end
+
+  defp active_column(nil, _color, _g), do: []
+
+  defp active_column(note, color, g) do
+    x0 = x_of(g, note.start_ms)
+    x1 = x_of(g, note.start_ms + note.dur_ms) - Style.note_gap()
+
+    rect(x0, 6, max(x1 - x0, 24), 98,
+      color: color || Style.neutral(),
+      fill: true,
+      radius: 12,
+      opacity: Style.alpha(:column_wash)
+    )
+  end
+
+  defp staff_lines(x0, x1) do
+    for i <- 0..4 do
+      y = @staff_top + i * Style.staff_space()
+      line(x0, y, x1, y, color: Style.neutral(), width: 1, opacity: Style.alpha(:staff_line))
+    end
+  end
+
+  defp staff_bar_lines(song, g) do
+    for %{start_ms: t} <- song.bars, t >= g.from_ms and t <= g.to_ms do
+      x = x_of(g, t)
+
+      line(x, @staff_top, x, @staff_top + 4 * Style.staff_space(),
+        color: Style.neutral(),
+        width: 1,
+        opacity: Style.alpha(:staff_bar_line)
+      )
+    end
+  end
+
+  defp staff_y(step),
+    do:
+      @staff_top + 4 * Style.staff_space() - (step - @bass_bottom_line) * Style.staff_space() / 2
+
+  defp staff_note(note, active, feedback_color, g) do
+    x = x_of(g, note.start_ms) + 10
+    step = Pitch.staff_step(note.midi)
+    y = staff_y(step)
+    is_active = note == active
+
+    {color, opacity} =
+      cond do
+        is_active -> {feedback_color || Style.notehead_future(), 1.0}
+        note.start_ms + note.dur_ms <= g.t_ms -> {Style.neutral(), Style.alpha(:notehead_past)}
+        true -> {Style.notehead_future(), 1.0}
+      end
+
+    hollow = note.beats >= 2
+
+    [
+      ledger_lines(x, step, color, opacity),
+      if(Pitch.accidental?(note.midi),
+        do: text(x - 16, y - 9, "♯", color: color, size: 14, opacity: opacity),
+        else: []
+      ),
+      notehead(x, y, hollow, color, opacity),
+      stem_for(x, y, step, color, opacity)
+    ]
+  end
+
+  # 13 × 9.6 ellipse rotated −20°, as a 12-point polygon.
+  defp notehead(x, y, hollow, color, opacity) do
+    a = -20 * :math.pi() / 180
+
+    pts =
+      for i <- 0..11 do
+        th = i * :math.pi() / 6
+        ex = 6.5 * :math.cos(th)
+        ey = 4.8 * :math.sin(th)
+
+        {Float.round(x + ex * :math.cos(a) - ey * :math.sin(a), 1),
+         Float.round(y + ex * :math.sin(a) + ey * :math.cos(a), 1)}
+      end
+
+    if hollow do
+      path(pts, color: color, width: 1.6, closed: true, opacity: opacity)
+    else
+      path(pts, color: color, fill: true, opacity: opacity)
+    end
+  end
+
+  defp stem_for(x, y, step, color, opacity) do
+    if step >= @bass_middle_line do
+      line(x - 6.0, y + 1, x - 6.0, y + 33, color: color, width: 1.4, opacity: opacity)
+    else
+      line(x + 6.0, y - 1, x + 6.0, y - 33, color: color, width: 1.4, opacity: opacity)
+    end
+  end
+
+  defp ledger_lines(x, step, color, opacity) do
+    above =
+      if step >= @bass_top_line + 2, do: Enum.to_list((@bass_top_line + 2)..step//2), else: []
+
+    below =
+      if step <= @bass_bottom_line - 2,
+        do: Enum.to_list((@bass_bottom_line - 2)..step//-2),
+        else: []
+
+    for s <- above ++ below do
+      y = staff_y(s)
+
+      line(x - 7, y, x + 7, y,
+        color: color,
+        width: 1,
+        opacity: opacity * Style.alpha(:staff_line) * 2
+      )
+    end
+  end
+
+  defp staff_lyrics(notes, active, g) do
+    size = Style.type(:staff_lyric)
+    rows = Map.new(@staff_lyric_rows, &{&1, -1.0e9})
+
+    notes
+    |> Enum.reject(& &1.slur)
+    |> Enum.reduce({[], rows}, fn note, {ops, rows} ->
+      s = display_lyric(note.lyric)
+      x = x_of(g, note.start_ms) + 6
+      is_active = note == active
+      row = Enum.find(@staff_lyric_rows, &(x >= rows[&1] + 3))
+
+      case {row, is_active} do
+        {nil, false} ->
+          {ops, rows}
+
+        {row, _} ->
+          y = row || List.last(@staff_lyric_rows)
+          op = text(x, y, s, syllable_style(is_active, size))
+          {[op | ops], Map.put(rows, y, x + text_width(s, size))}
+      end
+    end)
+    |> elem(0)
+  end
+
+  # Rest glyphs at every silent gap of half a beat or more.
+  defp rests(song, g) do
+    beat = Song.beat_ms(song)
+
+    song
+    |> gaps()
+    |> Enum.filter(fn {from, to} ->
+      to - from >= beat * 0.45 and from <= g.to_ms and to >= g.from_ms
+    end)
+    |> Enum.map(fn {from, to} -> rest_glyph(x_of(g, from) + 10, (to - from) / beat) end)
+  end
+
+  defp gaps(%Song{notes: notes} = song) do
+    ends = [0.0 | Enum.map(notes, &(&1.start_ms + &1.dur_ms))]
+    starts = Enum.map(notes, & &1.start_ms) ++ [Song.duration_ms(song)]
+
+    ends
+    |> Enum.zip(starts)
+    |> Enum.filter(fn {from, to} -> to - from > 1.0 end)
+  end
+
+  defp rest_glyph(x, beats) when beats >= 2 do
+    middle = staff_y(@bass_middle_line)
+    rect(x - 5, middle - 5, 10, 5, color: Style.neutral(), fill: true, opacity: 0.6)
+  end
+
+  defp rest_glyph(x, _beats) do
+    top = @staff_top + Style.staff_space()
+
+    path([{x - 2, top}, {x + 3, top + 6}, {x - 2, top + 11}, {x + 3, top + 17}, {x, top + 20}],
+      color: Style.neutral(),
+      width: 1.8,
+      cap: :round,
+      join: :round,
+      opacity: 0.6
+    )
+  end
+
+  defp bass_clef do
+    f_line = @staff_top + Style.staff_space()
+
+    [
+      circle(14, f_line, 3.2, color: Style.neutral(), fill: true, opacity: 0.85),
+      path(
+        [
+          {14, f_line},
+          {16, f_line - 6},
+          {22, f_line - 9},
+          {29, f_line - 6},
+          {31, f_line + 1},
+          {28, f_line + 11},
+          {20, f_line + 20},
+          {12, f_line + 25}
+        ],
+        color: Style.neutral(),
+        width: 2.6,
+        cap: :round,
+        join: :round,
+        opacity: 0.85
+      ),
+      circle(37, f_line - 5, 1.8, color: Style.neutral(), fill: true, opacity: 0.85),
+      circle(37, f_line + 5, 1.8, color: Style.neutral(), fill: true, opacity: 0.85)
+    ]
+  end
+
+  # ── Cluster: status pill, lyric, note name ───────────────────────────────
+
+  defp cluster(frame, g) do
+    x = Style.side_gutter()
+    pill_y = g.roll_top + 14
+    lyric_y = pill_y + 32 + 10
+    max_w = g.playhead_x - x - 10
+
+    case {frame.feedback.status, Song.note_at(frame.song, frame.t_ms)} do
+      {:breathe, _} -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
+      {_status, nil} -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
+      {status, note} -> singing_cluster(status, note, frame.feedback, x, pill_y, lyric_y, max_w)
+    end
+  end
+
+  defp singing_cluster(status, note, feedback, x, pill_y, lyric_y, max_w) do
+    color = Style.cents_color(feedback.color_cents)
+    size = fit_size(display_lyric(note.lyric), Style.type(:active_lyric), max_w)
+
+    [
+      status_pill(x, pill_y, status_label(status), status_icon(status), color),
+      text(x, lyric_y, display_lyric(note.lyric),
+        color: Style.text_primary(),
+        size: size,
+        weight: :bold
+      ),
+      text(x, lyric_y + size + 4, Pitch.name(note.midi),
+        color: Style.text_secondary(),
+        size: Style.type(:expected_note),
+        weight: :bold
+      )
+    ]
+  end
+
+  defp breathe_cluster(frame, x, pill_y, lyric_y, max_w) do
+    pill = status_pill(x, pill_y, "Breathe", :dashes, Style.neutral())
+
+    case Song.next_note(frame.song, frame.t_ms) do
+      nil ->
+        pill
+
+      next ->
+        lyric = display_lyric(next.lyric)
+        size = fit_size(lyric, Style.type(:active_lyric), max_w - 44)
+        beats = (next.start_ms - frame.t_ms) / Song.beat_ms(frame.song)
+        name_y = lyric_y + size + 4
+
+        [
+          pill,
+          text(x, lyric_y + size * 0.55, "Next",
+            color: Style.text_tertiary(),
+            size: Style.type(:subtitle),
+            weight: :bold
+          ),
+          text(x + 40, lyric_y, lyric, color: Style.text_primary(), size: size, weight: :bold),
+          text(x, name_y, Pitch.name(next.midi),
+            color: Style.text_secondary(),
+            size: Style.type(:expected_note),
+            weight: :bold
+          ),
+          text(x + 62, name_y + 8, in_beats(beats),
+            color: Style.text_tertiary(),
+            size: Style.type(:subtitle)
+          )
+        ]
+    end
+  end
+
+  defp in_beats(beats) when beats <= 1.05, do: "in 1 beat"
+  defp in_beats(beats), do: "in #{round(beats)} beats"
+
+  @doc "Status pill wording for a feedback status."
+  @spec status_label(Feedback.status()) :: String.t()
+  def status_label(:on_pitch), do: "On pitch"
+  def status_label({:low, :slightly}), do: "A little low"
+  def status_label({:high, :slightly}), do: "A little high"
+  def status_label({:low, :far}), do: "Low"
+  def status_label({:high, :far}), do: "High"
+  def status_label(:breathe), do: "Breathe"
+
+  defp status_icon(:on_pitch), do: :check
+  defp status_icon({dir, amount}), do: {dir, amount}
+  defp status_icon(:breathe), do: :dashes
+
+  defp status_pill(x, y, label, icon, color) do
+    size = Style.type(:status)
+    w = 14 + 16 + 8 + text_width(label, size) + 16
+
+    [
+      rect(x, y, w, 32, color: color, fill: true, radius: 16, opacity: Style.alpha(:status_pill)),
+      pill_icon(icon, x + 14 + 8, y + 16, color),
+      text(x + 14 + 16 + 8, y + 8, label, color: Style.text_primary(), size: size, weight: :bold)
+    ]
+  end
+
+  defp pill_icon(:check, cx, cy, color) do
+    path([{cx - 6, cy}, {cx - 2, cy + 4}, {cx + 6, cy - 5}],
+      color: color,
+      width: 2.2,
+      cap: :round,
+      join: :round
+    )
+  end
+
+  defp pill_icon(:dashes, cx, cy, color) do
+    for dx <- [-6, -1, 4] do
+      line(cx + dx, cy, cx + dx + 3, cy, color: color, width: 2, cap: :round)
+    end
+  end
+
+  defp pill_icon({dir, amount}, cx, cy, color) do
+    sign = if dir == :high, do: -1, else: 1
+    offsets = if amount == :far, do: [-3, 3], else: [0]
+    Enum.map(offsets, &chevron(cx, cy + &1 * -sign, sign, color))
+  end
+
+  # ── Shared helpers ───────────────────────────────────────────────────────
+
+  defp feedback_color(%Feedback{cents: cents, color_cents: c}) when is_number(cents),
+    do: Style.cents_color(c)
+
+  defp feedback_color(_feedback), do: nil
+
+  @doc ~S|Lyric as displayed: a trailing hyphen becomes an en dash ("Glo-" → "Glo–").|
+  @spec display_lyric(String.t()) :: String.t()
+  def display_lyric(lyric) do
+    if String.ends_with?(lyric, "-"), do: String.slice(lyric, 0..-2//1) <> "–", else: lyric
+  end
+
+  # The platform default font averages about 0.56 em per character at bold
+  # weights; good enough to size a pill and keep the lyric left of the playhead.
+  defp text_width(s, size), do: String.length(s) * size * 0.56
+
+  defp fit_size(s, size, max_w) do
+    w = text_width(s, size)
+    if w <= max_w, do: size, else: max(28, floor(size * max_w / w))
+  end
+end

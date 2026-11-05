@@ -20,7 +20,7 @@ defmodule ChoirCoach.MixProject do
 
   defp deps do
     [
-      {:mob,     "~> 0.9.26"},
+      {:mob, "~> 0.9.26"},
       {:mob_dev, "~> 0.7.31", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.18"},
       # Code quality — Credo + ex_slop (catches AI-generated patterns

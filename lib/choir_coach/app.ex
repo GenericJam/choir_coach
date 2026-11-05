@@ -5,7 +5,7 @@ defmodule ChoirCoach.App do
 
   @impl Mob.App
   def navigation(_platform) do
-    stack(:main, root: ChoirCoach.HomeScreen)
+    stack(:main, root: ChoirCoach.PracticeScreen)
   end
 
   @impl Mob.App
@@ -24,11 +24,14 @@ defmodule ChoirCoach.App do
 
     {:ok, _} = Application.ensure_all_started(:ecto_sqlite3)
     {:ok, _} = ChoirCoach.Repo.start_link()
+
     Ecto.Migrator.with_repo(ChoirCoach.Repo, fn repo ->
       Ecto.Migrator.run(repo, migrations_dir(), :up, all: true)
     end)
 
-    Mob.Screen.start_root(ChoirCoach.HomeScreen)
+    # Practice is held in portrait, like a phone normally is.
+    Mob.Device.lock_orientation(:portrait)
+    Mob.Screen.start_root(ChoirCoach.PracticeScreen)
     Mob.Dist.ensure_started(node: :"choir_coach_android@127.0.0.1", cookie: :mob_secret)
   end
 
@@ -53,7 +56,7 @@ defmodule ChoirCoach.App do
   # and pass the explicit path to Ecto.Migrator.run/4.
   defp migrations_dir do
     case System.get_env("MOB_BEAMS_DIR") do
-      nil       -> Application.app_dir(:choir_coach, "priv/repo/migrations")
+      nil -> Application.app_dir(:choir_coach, "priv/repo/migrations")
       beams_dir -> Path.join([beams_dir, "priv", "repo", "migrations"])
     end
   end
