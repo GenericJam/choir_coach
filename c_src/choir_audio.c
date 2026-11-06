@@ -70,6 +70,11 @@ enum {
     AA_CONTENT_MUSIC = 2,
     AA_PRESET_VOICE_RECOGNITION = 6,
     AA_CALLBACK_CONTINUE = 0,
+    AA_STATE_OPEN = 2,
+    AA_STATE_STARTING = 3,
+    AA_STATE_STARTED = 4,
+    AA_STATE_PAUSED = 6,
+    AA_STATE_FLUSHED = 8,
     AA_STATE_STOPPED = 10,
     AA_STATE_DISCONNECTED = 13,
 };
@@ -265,6 +270,7 @@ static struct {
     _Atomic int64_t seek_to;     /* −1: none */
     _Atomic bool playing;
     _Atomic bool out_dead;       /* disconnected: reopen on next play */
+    _Atomic int64_t out_buffer_frames; /* how far the callback runs ahead of the speaker */
     _Atomic float voice_gain, accomp_gain;
     _Atomic int layout;
     _Atomic uint32_t seg_seq;    /* seqlock over seg[] */
@@ -524,19 +530,30 @@ static void read_segments(segment_copy out[2]) {
     } while ((a & 1) || a != b);
 }
 
-/* Stop a stream and wait (bounded) until it has stopped before closing it:
- * the data callback may still be running after requestStop returns, and
- * closing under it, or freeing the buffer it reads, is not safe. */
-static void stop_and_close(AAudioStream *s) {
-    if (aa.requestStop(s) == AA_OK) {
-        int32_t state = aa.getState(s), next = state;
-        int64_t deadline = now_ns() + 500000000LL;
-        while (state != AA_STATE_STOPPED && state != AA_STATE_DISCONNECTED && now_ns() < deadline) {
-            if (aa.waitForStateChange(s, state, &next, 100000000LL) != AA_OK) break;
-            state = next;
-        }
+/* States in which AAudio runs no data callback. */
+static bool stream_quiet(int32_t state) {
+    return state == AA_STATE_OPEN || state == AA_STATE_PAUSED || state == AA_STATE_FLUSHED ||
+           state == AA_STATE_STOPPED || state == AA_STATE_DISCONNECTED;
+}
+
+/* Stop a stream, wait until no callback can run, then close it. Driven by
+ * the stream's state, not one call's result: a stream still PAUSING (a
+ * pause just before a track switch) refuses requestStop but reaches PAUSED
+ * by itself. Returns false if it was still running after a second (closed
+ * anyway): the caller must then not free what the callback reads. */
+static bool stop_and_close(AAudioStream *s) {
+    int64_t deadline = now_ns() + 1000000000LL;
+    int32_t state = aa.getState(s);
+    while (!stream_quiet(state) && now_ns() < deadline) {
+        if (state == AA_STATE_STARTING || state == AA_STATE_STARTED) aa.requestStop(s);
+        int32_t next = state;
+        aa.waitForStateChange(s, state, &next, 100000000LL); /* times out or moves on */
+        state = aa.getState(s);
     }
+    bool quiet = stream_quiet(state);
+    if (!quiet) LOGE("stream still running (state %d) at close", state);
     aa.close(s);
+    return quiet;
 }
 
 static void ring_push(const float *x, int n) {
@@ -600,9 +617,11 @@ static void output_error_cb(AAudioStream *s, void *user, aaudio_result_t err) {
     (void)user;
     LOGE("output stream error %d", err);
     /* Disconnected (headphones unplugged, Bluetooth dropped): the stream has
-     * stopped. Report the position as paused where the callback got to, and
-     * reopen on the next play. */
-    atomic_store(&E.paused_track_frame, atomic_load(&E.play_frame));
+     * stopped. Report the position as paused about where it was heard (the
+     * callback is a buffer ahead of the speaker; rewinding a little is better
+     * than skipping) and reopen on the next play. */
+    int64_t heard = atomic_load(&E.play_frame) - atomic_load(&E.out_buffer_frames);
+    atomic_store(&E.paused_track_frame, heard > 0 ? heard : 0);
     atomic_store(&E.out_dead, true);
     atomic_store(&E.playing, false);
 }
@@ -625,18 +644,22 @@ static aaudio_result_t open_output(void) {
     aa.builderDelete(b);
     if (r == AA_OK) {
         atomic_store(&E.out_dead, false);
+        atomic_store(&E.out_buffer_frames, aa.getBufferSizeInFrames(E.out));
         LOGI("output open: %d Hz, burst %d, buffer %d", aa.getSampleRate(E.out), aa.getFramesPerBurst(E.out),
              aa.getBufferSizeInFrames(E.out));
     }
     return r;
 }
 
-static void close_output(void) {
+/* Returns false if the callback may still be running (see stop_and_close). */
+static bool close_output(void) {
+    bool quiet = true;
     if (E.out) {
-        stop_and_close(E.out);
+        quiet = stop_and_close(E.out);
         E.out = NULL;
     }
     atomic_store(&E.playing, false);
+    return quiet;
 }
 
 /* Track frame being heard at monotonic time `t_ns`, or −1 when unknown.
@@ -816,8 +839,10 @@ static ERL_NIF_TERM nif_load(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
 
     pthread_mutex_lock(&E.lock);
     stop_listening_locked();
-    close_output(); /* the callback must not read the buffer we free */
-    free(E.pcm);
+    /* The callback must not read the buffer we free; if the stream wouldn't
+     * stop, leak it rather than risk that. */
+    if (close_output()) free(E.pcm);
+    else LOGE("leaking the track buffer: output stream did not stop");
     E.pcm = NULL;
     E.capacity_frames = 0;
     E.sample_rate = 0;

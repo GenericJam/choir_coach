@@ -345,10 +345,15 @@ defmodule ChoirCoach.PracticeScreen do
 
   # Leaving the song (back, or the system back gesture): the engine is one
   # per app, so stop the music and the microphone here, or they run on
-  # under the song list.
+  # under the song list; and let the screen sleep again.
   def terminate(_reason, socket) do
     a = socket.assigns
-    if a[:audio], do: a.engine.stop(a.audio)
+
+    if a[:audio] do
+      keep_awake(false)
+      a.engine.stop(a.audio)
+    end
+
     :ok
   end
 
