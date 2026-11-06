@@ -70,6 +70,8 @@ enum {
     AA_CONTENT_MUSIC = 2,
     AA_PRESET_VOICE_RECOGNITION = 6,
     AA_CALLBACK_CONTINUE = 0,
+    AA_STATE_STOPPED = 10,
+    AA_STATE_DISCONNECTED = 13,
 };
 
 static struct {
@@ -98,6 +100,8 @@ static struct {
     int64_t (*getFramesWritten)(AAudioStream *);
     int64_t (*getFramesRead)(AAudioStream *);
     aaudio_result_t (*getTimestamp)(AAudioStream *, clockid_t, int64_t *, int64_t *);
+    int32_t (*getState)(AAudioStream *);
+    aaudio_result_t (*waitForStateChange)(AAudioStream *, int32_t, int32_t *, int64_t);
 } aa;
 
 /* ── libmediandk, declared by hand ───────────────────────────────────────── */
@@ -187,6 +191,8 @@ static bool bind_libraries(void) {
     BIND(aa, a, getFramesWritten, "AAudioStream_getFramesWritten");
     BIND(aa, a, getFramesRead, "AAudioStream_getFramesRead");
     BIND(aa, a, getTimestamp, "AAudioStream_getTimestamp");
+    BIND(aa, a, getState, "AAudioStream_getState");
+    BIND(aa, a, waitForStateChange, "AAudioStream_waitForStateChange");
 
     BIND(md, m, exNew, "AMediaExtractor_new");
     BIND(md, m, exDelete, "AMediaExtractor_delete");
@@ -229,11 +235,17 @@ typedef struct {
     float song_ms, hz, confidence, rms_db;
 } reading;
 
-/* Where a run of continuous playback started: stream frame ↔ track frame. */
+/* Where a run of continuous playback started: stream frame ↔ track frame.
+ * Atomic fields: the callback writes them while NIF calls read them. */
+typedef struct {
+    _Atomic int64_t stream_frame;
+    _Atomic int64_t track_frame;
+} segment;
+
 typedef struct {
     int64_t stream_frame;
     int64_t track_frame;
-} segment;
+} segment_copy;
 
 static struct {
     pthread_mutex_t lock; /* control path only — never taken by callbacks */
@@ -484,22 +496,47 @@ static void *decoder_main(void *arg) {
 
 /* ── Output ──────────────────────────────────────────────────────────────── */
 
+/* A seqlock: the callback is the only writer, readers retry while it writes.
+ * Data fields are relaxed atomics, ordered by the fences around them. */
 static void write_segment(int64_t stream_frame, int64_t track_frame) {
-    atomic_fetch_add(&E.seg_seq, 1); /* odd: writing */
-    E.seg[1] = E.seg[0];
-    E.seg[0].stream_frame = stream_frame;
-    E.seg[0].track_frame = track_frame;
-    atomic_fetch_add(&E.seg_seq, 1); /* even: stable */
+    uint32_t seq = atomic_load_explicit(&E.seg_seq, memory_order_relaxed);
+    atomic_store_explicit(&E.seg_seq, seq + 1, memory_order_relaxed); /* odd: writing */
+    atomic_thread_fence(memory_order_release);
+    int64_t s0 = atomic_load_explicit(&E.seg[0].stream_frame, memory_order_relaxed);
+    int64_t t0 = atomic_load_explicit(&E.seg[0].track_frame, memory_order_relaxed);
+    atomic_store_explicit(&E.seg[1].stream_frame, s0, memory_order_relaxed);
+    atomic_store_explicit(&E.seg[1].track_frame, t0, memory_order_relaxed);
+    atomic_store_explicit(&E.seg[0].stream_frame, stream_frame, memory_order_relaxed);
+    atomic_store_explicit(&E.seg[0].track_frame, track_frame, memory_order_relaxed);
+    atomic_store_explicit(&E.seg_seq, seq + 2, memory_order_release); /* even: stable */
 }
 
-static void read_segments(segment out[2]) {
+static void read_segments(segment_copy out[2]) {
     uint32_t a, b;
     do {
-        a = atomic_load(&E.seg_seq);
-        out[0] = E.seg[0];
-        out[1] = E.seg[1];
-        b = atomic_load(&E.seg_seq);
+        a = atomic_load_explicit(&E.seg_seq, memory_order_acquire);
+        for (int i = 0; i < 2; i++) {
+            out[i].stream_frame = atomic_load_explicit(&E.seg[i].stream_frame, memory_order_relaxed);
+            out[i].track_frame = atomic_load_explicit(&E.seg[i].track_frame, memory_order_relaxed);
+        }
+        atomic_thread_fence(memory_order_acquire);
+        b = atomic_load_explicit(&E.seg_seq, memory_order_relaxed);
     } while ((a & 1) || a != b);
+}
+
+/* Stop a stream and wait (bounded) until it has stopped before closing it:
+ * the data callback may still be running after requestStop returns, and
+ * closing under it, or freeing the buffer it reads, is not safe. */
+static void stop_and_close(AAudioStream *s) {
+    if (aa.requestStop(s) == AA_OK) {
+        int32_t state = aa.getState(s), next = state;
+        int64_t deadline = now_ns() + 500000000LL;
+        while (state != AA_STATE_STOPPED && state != AA_STATE_DISCONNECTED && now_ns() < deadline) {
+            if (aa.waitForStateChange(s, state, &next, 100000000LL) != AA_OK) break;
+            state = next;
+        }
+    }
+    aa.close(s);
 }
 
 static void ring_push(const float *x, int n) {
@@ -562,6 +599,10 @@ static void output_error_cb(AAudioStream *s, void *user, aaudio_result_t err) {
     (void)s;
     (void)user;
     LOGE("output stream error %d", err);
+    /* Disconnected (headphones unplugged, Bluetooth dropped): the stream has
+     * stopped. Report the position as paused where the callback got to, and
+     * reopen on the next play. */
+    atomic_store(&E.paused_track_frame, atomic_load(&E.play_frame));
     atomic_store(&E.out_dead, true);
     atomic_store(&E.playing, false);
 }
@@ -592,8 +633,7 @@ static aaudio_result_t open_output(void) {
 
 static void close_output(void) {
     if (E.out) {
-        aa.requestStop(E.out);
-        aa.close(E.out);
+        stop_and_close(E.out);
         E.out = NULL;
     }
     atomic_store(&E.playing, false);
@@ -611,7 +651,7 @@ static double heard_track_frame(int64_t t_ns, bool settled) {
     int64_t pending = atomic_load(&E.seek_to);
     if (settled && pending >= 0) return (double)pending;
     int64_t pos, time;
-    segment seg[2];
+    segment_copy seg[2];
     read_segments(seg);
     if (aa.getTimestamp(E.out, CLOCK_MONOTONIC, &pos, &time) != AA_OK) {
         /* No timestamp yet (just started): assume the written frames are a
@@ -621,7 +661,7 @@ static double heard_track_frame(int64_t t_ns, bool settled) {
     }
     double stream_frame = (double)pos + (double)(t_ns - time) * aa.getSampleRate(E.out) / 1e9;
     if (settled && stream_frame < (double)seg[0].stream_frame) return (double)seg[0].track_frame;
-    const segment *s = stream_frame >= (double)seg[0].stream_frame ? &seg[0] : &seg[1];
+    const segment_copy *s = stream_frame >= (double)seg[0].stream_frame ? &seg[0] : &seg[1];
     double track = (double)s->track_frame + (stream_frame - (double)s->stream_frame) *
                                                 (double)E.sample_rate / aa.getSampleRate(E.out);
     return track < 0 ? 0 : track;
@@ -746,8 +786,7 @@ static aaudio_result_t open_input(void) {
 static void stop_listening_locked(void) {
     if (atomic_exchange(&E.analysis_run, false)) pthread_join(E.analysis, NULL);
     if (E.in) {
-        aa.requestStop(E.in);
-        aa.close(E.in);
+        stop_and_close(E.in);
         E.in = NULL;
     }
     atomic_store(&E.source, SOURCE_NONE);
@@ -842,9 +881,10 @@ static ERL_NIF_TERM nif_pause(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
         double heard = heard_track_frame(now_ns(), true);
         atomic_store(&E.paused_track_frame, heard >= 0 ? (int64_t)heard : atomic_load(&E.play_frame));
     }
-    /* Always, even if we believe it stopped: pausing a paused stream is harmless,
-     * missing a running one leaves the music going. */
-    if (E.out && !atomic_load(&E.out_dead)) aa.requestPause(E.out);
+    /* Always, even if we believe it stopped: pausing a paused stream is
+     * harmless, missing a running one leaves the music going. If AAudio
+     * refuses the pause, stop instead (a stopped output stream starts again). */
+    if (E.out && !atomic_load(&E.out_dead) && aa.requestPause(E.out) != AA_OK) aa.requestStop(E.out);
     atomic_store(&E.playing, false);
     pthread_mutex_unlock(&E.lock);
     return atom(env, "ok");
@@ -1001,12 +1041,13 @@ static int on_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
 
 static ErlNifFunc nif_funcs[] = {
     {"load", 1, nif_load, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"play", 1, nif_play, 0},
+    /* Dirty IO where the call may open, stop or close a stream, or join a thread. */
+    {"play", 1, nif_play, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"pause", 0, nif_pause, 0},
     {"position", 0, nif_position, 0},
     {"set_mix", 3, nif_set_mix, 0},
-    {"listen", 1, nif_listen, 0},
-    {"stop_listening", 0, nif_stop_listening, 0},
+    {"listen", 1, nif_listen, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"stop_listening", 0, nif_stop_listening, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"readings", 0, nif_readings, 0},
     {"info", 0, nif_info, 0},
 };

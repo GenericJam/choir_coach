@@ -593,17 +593,39 @@ defmodule ChoirCoach.PracticeView do
     end
   end
 
-  defp staff_bar_lines(song, g) do
-    for %{start_ms: t} <- song.bars, t >= g.from_ms and t <= g.to_ms do
-      x = x_of(g, t)
+  # Key signature glyphs sit after the clef, 7 dp apart, on the bass-clef
+  # lines and spaces engravers use (sharps F C G D A E B, flats B E A D G C F).
+  @key_x 44.0
+  @key_spacing 7.0
+  @bass_sharps Enum.map(~w(F3 C3 G3 D3 A2 E3 B2), &Pitch.spell(&1).step)
+  @bass_flats Enum.map(~w(B2 E3 A2 D3 G2 C3 F2), &Pitch.spell(&1).step)
 
-      line(x, @staff_top, x, @staff_top + 4 * Style.staff_space(),
-        color: Style.neutral(),
-        width: 1,
-        opacity: Style.alpha(:staff_bar_line)
-      )
-    end
+  # Bar lines, and where the key changes, the new signature just before the
+  # line (naturals cancelling the old one when the new key has none).
+  defp staff_bar_lines(song, g) do
+    song.bars
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.map(fn [prev, bar] -> {bar, if(bar.key != prev.key, do: prev.key)} end)
+    |> List.insert_at(0, {hd(song.bars), nil})
+    |> Enum.filter(fn {bar, _} -> bar.start_ms >= g.from_ms and bar.start_ms <= g.to_ms end)
+    |> Enum.map(fn {bar, old_key} ->
+      x = x_of(g, bar.start_ms)
+
+      [
+        line(x, @staff_top, x, @staff_top + 4 * Style.staff_space(),
+          color: Style.neutral(),
+          width: 1,
+          opacity: Style.alpha(:staff_bar_line)
+        ),
+        if(old_key, do: key_change(old_key, bar.key, x), else: [])
+      ]
+    end)
   end
+
+  defp key_change(old_key, 0, x),
+    do: key_glyphs(old_key, x - 4 - abs(old_key) * @key_spacing, "♮")
+
+  defp key_change(_old_key, key, x), do: key_glyphs(key, x - 4 - abs(key) * @key_spacing, nil)
 
   defp staff_y(step),
     do:
@@ -639,24 +661,20 @@ defmodule ChoirCoach.PracticeView do
     text(x, y - dy, glyph, color: color, size: 14, opacity: opacity)
   end
 
-  # Key signature glyphs sit after the clef, 7 dp apart, on the bass-clef
-  # lines and spaces engravers use (sharps F C G D A E B, flats B E A D G C F).
-  @key_x 44.0
-  @key_spacing 7.0
-  @bass_sharps Enum.map(~w(F3 C3 G3 D3 A2 E3 B2), &Pitch.spell(&1).step)
-  @bass_flats Enum.map(~w(B2 E3 A2 D3 G2 C3 F2), &Pitch.spell(&1).step)
+  defp key_signature(fifths), do: key_glyphs(fifths, @key_x, nil)
 
-  defp key_signature(0), do: []
+  # `fifths` sharps or flats from `x0` (or `glyph` in their places: naturals).
+  defp key_glyphs(0, _x0, _glyph), do: []
 
-  defp key_signature(fifths) do
-    {glyph, steps, dy} =
+  defp key_glyphs(fifths, x0, glyph) do
+    {sign, steps, dy} =
       if fifths > 0, do: {"♯", @bass_sharps, 9}, else: {"♭", @bass_flats, 12}
 
     steps
     |> Enum.take(abs(fifths))
     |> Enum.with_index()
     |> Enum.map(fn {step, i} ->
-      text(@key_x + i * @key_spacing, staff_y(step) - dy, glyph,
+      text(x0 + i * @key_spacing, staff_y(step) - if(glyph, do: 9, else: dy), glyph || sign,
         color: Style.neutral(),
         size: 14,
         opacity: 0.85

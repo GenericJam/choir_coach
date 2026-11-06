@@ -48,6 +48,13 @@ defmodule ChoirCoach.Audio.Native do
   end
 
   @impl true
+  def stop(state) do
+    Nif.pause()
+    Nif.stop_listening()
+    %{state | source: nil}
+  end
+
+  @impl true
   def position(state) do
     case Nif.position() do
       {:empty, _} -> {:loading, 0.0}

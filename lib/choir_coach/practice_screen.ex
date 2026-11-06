@@ -344,9 +344,11 @@ defmodule ChoirCoach.PracticeScreen do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   # Leaving the song (back, or the system back gesture): the engine is one
-  # per app, so stop the music here or it plays on under the song list.
+  # per app, so stop the music and the microphone here, or they run on
+  # under the song list.
   def terminate(_reason, socket) do
-    if socket.assigns[:audio], do: pause(socket)
+    a = socket.assigns
+    if a[:audio], do: a.engine.stop(a.audio)
     :ok
   end
 
@@ -420,13 +422,18 @@ defmodule ChoirCoach.PracticeScreen do
 
   @doc false
   # One frame: read the position, wrap or stop at the end, take the readings,
-  # smooth.
+  # smooth. The engine reporting paused while we play means the output went
+  # away (headphones unplugged, Bluetooth dropped): show it paused there;
+  # play reopens it.
   def advance(socket) do
     a = socket.assigns
-    {_status, t} = a.engine.position(a.audio)
+    {status, t} = a.engine.position(a.audio)
     duration = Song.duration_ms(a.song)
 
     cond do
+      status == :paused ->
+        socket |> pause() |> Mob.Socket.assign(:t_ms, t)
+
       t >= duration and a.loop ->
         socket |> Mob.Socket.assign(:t_ms, loop_start(a)) |> play()
 

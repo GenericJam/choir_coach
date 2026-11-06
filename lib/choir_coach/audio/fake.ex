@@ -44,6 +44,9 @@ defmodule ChoirCoach.Audio.Fake do
   end
 
   @impl true
+  def stop(state), do: pause(state)
+
+  @impl true
   def position(%{playing: true} = state),
     do: {:playing, state.base_ms + (now(state) - state.started_at)}
 

@@ -66,6 +66,59 @@ defmodule ChoirCoach.SongTest do
            ]
   end
 
+  describe "accidentals the staff prints" do
+    defp accidentals(opts) do
+      opts
+      |> Keyword.merge(title: "t", tempo_bpm: 60, beats_per_bar: 4, first_bar: 1)
+      |> Song.build()
+      |> Map.fetch!(:notes)
+      |> Enum.map(&{&1.name, &1.accidental})
+    end
+
+    test "the key signature covers its notes; others print once per bar, then naturals" do
+      # D major: F♯ and C♯ are in the key.
+      assert accidentals(
+               key: 2,
+               bars: [
+                 [n: {"F#3", 1, "a"}, n: {"C3", 1, "b"}, n: {"C3", 1, "c"}, n: {"C#3", 1, "d"}],
+                 [n: {"C3", 4, "e"}]
+               ]
+             ) == [
+               {"F#3", nil},
+               {"C3", :natural},
+               {"C3", nil},
+               {"C#3", :sharp},
+               {"C3", :natural}
+             ]
+    end
+
+    test "a note tied over the barline keeps its accidental without reprinting it" do
+      assert accidentals(
+               key: -2,
+               bars: [
+                 [rest: 3, n: {"E3", 1, "a"}],
+                 [n: {"E3", 2, "~a"}, n: {"E3", 2, "b"}]
+               ]
+             ) == [{"E3", :natural}, {"E3", nil}, {"E3", :natural}]
+    end
+
+    test "after a key change, notes are spelled against the new key" do
+      s =
+        Song.build(
+          title: "t",
+          tempo_bpm: 60,
+          beats_per_bar: 4,
+          first_bar: 1,
+          key: 0,
+          key_changes: %{2 => 2},
+          bars: [[n: {"F#3", 4, "a"}], [n: {"F#3", 2, "b"}, n: {"F3", 2, "c"}]]
+        )
+
+      assert Enum.map(s.notes, & &1.accidental) == [:sharp, nil, :natural]
+      assert Enum.map(s.bars, & &1.key) == [0, 2]
+    end
+  end
+
   test "lookups across notes and rests" do
     s = song()
     assert Song.note_at(s, 250) == nil

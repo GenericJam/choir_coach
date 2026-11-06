@@ -111,18 +111,18 @@ defmodule ChoirCoach.Song do
       opts
       |> Keyword.fetch!(:bars)
       |> Enum.with_index(first_bar)
-      |> Enum.reduce({[], [], {start, tempo, beats_per_bar, key}}, fn {events, number},
-                                                                      {notes, bars,
-                                                                       {bar_start, tempo, beats,
-                                                                        key}} ->
+      |> Enum.reduce({[], [], {start, tempo, beats_per_bar, key, nil}}, fn {events, number},
+                                                                           {notes, bars,
+                                                                            {bar_start, tempo,
+                                                                             beats, key, held}} ->
         tempo = Map.get(tempos, number, tempo)
         beats = Map.get(meters, number, beats)
         key = Map.get(keys, number, key)
         check_bar!(events, number, beats)
         dur = Map.get(bar_ms, number, beats * 60_000.0 / tempo) * 1.0
-        bar_notes = place_bar(events, number, bar_start, dur / beats, key)
+        {bar_notes, held} = place_bar(events, number, bar_start, dur / beats, key, held)
         bar = %{number: number, start_ms: bar_start, dur_ms: dur, beats: beats, key: key}
-        {[bar_notes | notes], [bar | bars], {bar_start + dur, tempo, beats, key}}
+        {[bar_notes | notes], [bar | bars], {bar_start + dur, tempo, beats, key, held}}
       end)
 
     %__MODULE__{
@@ -154,21 +154,26 @@ defmodule ChoirCoach.Song do
 
   # Notes of one bar. `shown` tracks the alteration in force on each staff
   # step, so an accidental prints once per bar, as on the page, and a return
-  # to the key signature's note gets its natural (or sharp/flat) back.
-  defp place_bar(events, number, bar_start, beat_ms, key) do
-    {notes, _} =
-      Enum.reduce(events, {[], {0.0, %{}}}, fn
-        {:rest, beats}, {acc, {offset, shown}} ->
-          {acc, {offset + beats, shown}}
+  # to the key signature's note gets its natural (or sharp/flat) back. `held`
+  # is the note sounding right before (nil after a rest), across the barline
+  # too: a `~` continuation at its pitch is a tie, which prints no accidental
+  # and doesn't change what is in force for the rest of the bar. Returns the
+  # notes and the note held at the bar's end.
+  defp place_bar(events, number, bar_start, beat_ms, key, held) do
+    {notes, {_, _, held}} =
+      Enum.reduce(events, {[], {0.0, %{}, held}}, fn
+        {:rest, beats}, {acc, {offset, shown, _held}} ->
+          {acc, {offset + beats, shown, nil}}
 
-        {:n, {name, beats, lyric}}, {acc, {offset, shown}} ->
+        {:n, {name, beats, lyric}}, {acc, {offset, shown, held}} ->
           {slur, lyric} =
             case lyric do
               "~" <> rest -> {true, rest}
               lyric -> {false, lyric}
             end
 
-          %{midi: midi, step: step, alter: alter} = Pitch.spell(name)
+          %{midi: midi, step: step, alter: alter} = spelled = Pitch.spell(name)
+          tie = slur and held == spelled
           in_force = Map.get_lazy(shown, step, fn -> Pitch.key_alter(key, step) end)
 
           note = %Note{
@@ -180,14 +185,15 @@ defmodule ChoirCoach.Song do
             beats: beats,
             name: name,
             step: step,
-            accidental: if(alter != in_force, do: accidental(alter)),
+            accidental: if(not tie and alter != in_force, do: accidental(alter)),
             slur: slur
           }
 
-          {[note | acc], {offset + beats, Map.put(shown, step, alter)}}
+          shown = if tie, do: shown, else: Map.put(shown, step, alter)
+          {[note | acc], {offset + beats, shown, spelled}}
       end)
 
-    Enum.reverse(notes)
+    {Enum.reverse(notes), held}
   end
 
   defp accidental(1), do: :sharp

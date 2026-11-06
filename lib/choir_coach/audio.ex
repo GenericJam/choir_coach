@@ -32,6 +32,8 @@ defmodule ChoirCoach.Audio do
   @callback load(state(), track()) :: state()
   @callback play(state(), float()) :: {:ok, state()} | {:error, term(), state()}
   @callback pause(state()) :: state()
+  @doc "Leaving the song: stop playback and listening (the microphone goes off)."
+  @callback stop(state()) :: state()
   @callback position(state()) :: {:playing | :paused | :loading, float()}
   @callback set_mix(state(), float(), float()) :: state()
   @callback listen(state(), :mic | :playback) :: {:ok, state()} | {:error, term(), state()}
