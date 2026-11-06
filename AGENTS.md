@@ -49,21 +49,31 @@ Coach" (reference artboard 390 × 844 pt); its tokens live in
 - `ChoirCoach.Song` — a voice part as timed notes on the rehearsal track's
   timeline, built bar by bar from the score (`Song.build/1` rejects a bar
   whose beats don't add up; `start_ms` places bar 1, `bar_ms` stretches a
-  rit. or fermata). `ChoirCoach.Songs.*` hold transcriptions and each
-  track's bar-1 offset and voice channel.
+  rit. or fermata; `key`, `key_changes`, `meter`, `tempo` change from a bar
+  on). Notes keep their written spelling (`"Bb2"` sits on the B line) and
+  carry the accidental the staff prints. `ChoirCoach.Songs` lists the songs;
+  each `ChoirCoach.Songs.*` module holds a transcription (`bass/0`) and each
+  track's bar-1 offset and voice channel (`tracks/0`).
+- `ChoirCoach.SongsScreen` — the root: the song list. Tapping a song pushes
+  the practice screen with `%{song:, tracks:}`.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. `ChoirCoach.ControlsView` draws
   the transport icons and progress track.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
   wording, following the handoff's motion rules.
-- `ChoirCoach.Audio` — the engine contract (song-time play / pause /
+- `ChoirCoach.Audio` — the engine contract (song-time play / pause / stop /
   position / mix / listen / readings). `Audio.Native` wraps the
   `choir_audio` NIF (`c_src/choir_audio.c`: AAudio playback and mic, NDK
   decoder, YIN in `c_src/pitch_yin.c`; Android only, loaded with dlopen).
+  The NIF is one engine per app: leaving a song must `stop/1` it (music and
+  mic). Streams are torn down by state (`stop_and_close`): never free the
+  track buffer while a callback can still run.
   `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`.
 - `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
   readings are octave-folded and gated to the written notes before they feed
-  the trace and feedback. The header gear opens `ChoirCoach.SettingsScreen`.
+  the trace and feedback. The header gear opens `ChoirCoach.SettingsScreen`;
+  `‹` (or system back) returns to the list, and `terminate/2` stops the
+  engine.
 - `ChoirCoach.Settings` — saved preferences in `Mob.State`. The headphone
   delay (`:mic_delay_ms`, 0–400 ms in 10 ms steps) is how much earlier mic
   readings were sung than they arrive; it differs between wired and
@@ -72,14 +82,30 @@ Coach" (reference artboard 390 × 844 pt); its tokens live in
 
 ## Audio files
 
-The rehearsal tracks are licensed recordings: they live in `priv/audio/`
-(gitignored) and reach the phone with the BEAMs on deploy. What a Glorious
-Night (Drive folder "3. What A Glorious Night"): `bass.mp3` (bass voice left,
-accompaniment right, bar 1 at 358 ms), `split.mp3` (choir right,
-accompaniment left, 409 ms), `demo.mp3` (full mix with narration, 18 449 ms).
-Offsets were measured by aligning the transcription to the detector's
-reading of the bass channel, and the tracks to each other by
-cross-correlation.
+The rehearsal tracks are licensed recordings: they live in
+`priv/audio/<song>/` (gitignored) and reach the phone with the BEAMs on
+deploy. Each song has `bass.mp3` (all voices left with the bass loudest,
+the others about 12 dB down; accompaniment right), `split.mp3`
+(accompaniment left, full choir right) and `demo.mp3` (finished mix). No
+file has the bass alone, and the part tracks can't be unmixed (each is its
+own vocal mix). Offsets live in each song's `tracks/0`.
+
+## Adding a song
+
+1. Download from its Drive folder (score PDF, Bass rehearsal, Split, Demo)
+   into `priv/audio/<slug>/` as `bass.mp3`, `split.mp3`, `demo.mp3`.
+2. Transcribe the bass (the lower voice of the bass-clef staff; tenor is the
+   upper) bar by bar, sounding pitches with the key signature applied.
+   `scripts/validate_transcription.exs` checks a chunk's beats and names.
+3. `scripts/align_track.exs <Module>` fits bar 1 and the tempo on the
+   rehearsal track, then lists notes heard off the written pitch: re-read
+   each at 400 dpi (most are the tenor or a scoop; some are misreads).
+   `ALIGN_BARS=<rit/fermata bars>` fits their `bar_ms`; `ALIGN_FIT=0`
+   checks the song's own timing.
+4. Split and Demo offsets: cross-correlate onset envelopes against the
+   rehearsal track (they share the accompaniment); check the lag holds in
+   every 30 s window.
+5. Add the module to `ChoirCoach.Songs`.
 
 ## Working on it
 
