@@ -41,7 +41,7 @@ defmodule ChoirCoach.Songs.GloriousNight do
       title: "What a Glorious Night",
       part: :bass,
       clef: :bass,
-      key_name: "C major",
+      key: 0,
       tempo_bpm: 105,
       beats_per_bar: 4,
       first_bar: 1,

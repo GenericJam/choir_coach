@@ -11,6 +11,7 @@ defmodule ChoirCoach.Song do
         title: "What a Glorious Night",
         tempo_bpm: 105,
         beats_per_bar: 4,
+        key: 0,
         first_bar: 20,
         start_ms: 358.0,
         bar_ms: %{112 => 3_280.0},
@@ -22,19 +23,30 @@ defmodule ChoirCoach.Song do
 
   Durations are in beats. `{:n, {name, beats, lyric}}` is a sung note,
   `{:rest, beats}` a rest. A lyric starting with `~` continues the previous
-  syllable (a slur or tie onto a new pitch).
+  syllable (a slur or tie onto a new pitch). Names are written pitches with
+  the key signature applied (`"F#3"` in D major, `"Bb2"` in B♭ major), so
+  each note keeps its spelling for the staff.
 
   `start_ms` is where the first bar falls on the track (default 0). Every bar
-  lasts `beats_per_bar` beats at `tempo_bpm` unless `bar_ms` gives its length
+  lasts its beat count at the current tempo unless `bar_ms` gives its length
   in ms (a ritardando, a fermata); its notes stretch proportionally.
+
+  Changes take effect from the bar given and last until the next change:
+  `key_changes: %{57 => 4}` (key in fifths: sharps positive, flats negative),
+  `meter: %{30 => 2, 31 => 4}` (beats per bar), `tempo: %{61 => 96}`.
   """
 
   alias ChoirCoach.Pitch
 
   defmodule Note do
-    @moduledoc "A sung note: absolute start, duration, MIDI pitch, lyric and bar."
-    @enforce_keys [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats]
-    defstruct [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, slur: false]
+    @moduledoc """
+    A sung note: absolute start, duration, MIDI pitch, lyric and bar, plus
+    its spelling: `name` as written, `step` (staff position of its letter,
+    see `ChoirCoach.Pitch.staff_step/1`) and the `accidental` the staff
+    prints (nil when the key signature or an earlier note in the bar covers it).
+    """
+    @enforce_keys [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, :name, :step]
+    defstruct [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, :name, :step, :accidental, slur: false]
 
     @type t :: %__MODULE__{
             start_ms: float(),
@@ -43,19 +55,28 @@ defmodule ChoirCoach.Song do
             lyric: String.t(),
             bar: pos_integer(),
             beats: number(),
+            name: String.t(),
+            step: integer(),
+            accidental: nil | :sharp | :flat | :natural,
             slur: boolean()
           }
   end
 
   @enforce_keys [:title, :part, :tempo_bpm, :beats_per_bar, :notes, :bars]
-  defstruct [:title, :part, :clef, :key_name, :tempo_bpm, :beats_per_bar, :notes, :bars]
+  defstruct [:title, :part, :clef, :key, :tempo_bpm, :beats_per_bar, :notes, :bars]
 
-  @type bar :: %{number: pos_integer(), start_ms: float(), dur_ms: float()}
+  @type bar :: %{
+          number: pos_integer(),
+          start_ms: float(),
+          dur_ms: float(),
+          beats: number(),
+          key: integer()
+        }
   @type t :: %__MODULE__{
           title: String.t(),
           part: atom(),
           clef: :bass | :treble,
-          key_name: String.t(),
+          key: integer(),
           tempo_bpm: number(),
           beats_per_bar: pos_integer(),
           notes: [Note.t()],
@@ -67,33 +88,37 @@ defmodule ChoirCoach.Song do
   def build(opts) do
     tempo = Keyword.fetch!(opts, :tempo_bpm)
     beats_per_bar = Keyword.fetch!(opts, :beats_per_bar)
+    key = Keyword.get(opts, :key, 0)
     first_bar = Keyword.fetch!(opts, :first_bar)
     bar_ms = Keyword.get(opts, :bar_ms, %{})
-    regular_bar_ms = beats_per_bar * 60_000.0 / tempo
+    tempos = Keyword.get(opts, :tempo, %{})
+    meters = Keyword.get(opts, :meter, %{})
+    keys = Keyword.get(opts, :key_changes, %{})
+    start = Keyword.get(opts, :start_ms, 0.0) * 1.0
 
-    {notes, bars, _end} =
+    {notes, bars, _} =
       opts
       |> Keyword.fetch!(:bars)
       |> Enum.with_index(first_bar)
-      |> Enum.reduce({[], [], Keyword.get(opts, :start_ms, 0.0) * 1.0}, fn {events, number},
-                                                                           {notes, bars,
-                                                                            bar_start} ->
-        check_bar!(events, number, beats_per_bar)
-        dur = Map.get(bar_ms, number, regular_bar_ms) * 1.0
-        ms_per_beat = dur / beats_per_bar
-
-        {bar_notes, _} =
-          Enum.flat_map_reduce(events, 0.0, &place(&1, &2, number, bar_start, ms_per_beat))
-
-        bar = %{number: number, start_ms: bar_start, dur_ms: dur}
-        {[bar_notes | notes], [bar | bars], bar_start + dur}
+      |> Enum.reduce({[], [], {start, tempo, beats_per_bar, key}}, fn {events, number},
+                                                                      {notes, bars,
+                                                                       {bar_start, tempo, beats,
+                                                                        key}} ->
+        tempo = Map.get(tempos, number, tempo)
+        beats = Map.get(meters, number, beats)
+        key = Map.get(keys, number, key)
+        check_bar!(events, number, beats)
+        dur = Map.get(bar_ms, number, beats * 60_000.0 / tempo) * 1.0
+        bar_notes = place_bar(events, number, bar_start, dur / beats, key)
+        bar = %{number: number, start_ms: bar_start, dur_ms: dur, beats: beats, key: key}
+        {[bar_notes | notes], [bar | bars], {bar_start + dur, tempo, beats, key}}
       end)
 
     %__MODULE__{
       title: Keyword.fetch!(opts, :title),
       part: Keyword.get(opts, :part, :bass),
       clef: Keyword.get(opts, :clef, :bass),
-      key_name: Keyword.get(opts, :key_name, "C major"),
+      key: key,
       tempo_bpm: tempo,
       beats_per_bar: beats_per_bar,
       notes: notes |> Enum.reverse() |> List.flatten(),
@@ -101,38 +126,62 @@ defmodule ChoirCoach.Song do
     }
   end
 
-  defp check_bar!(events, number, beats_per_bar) do
+  @doc "The song's opening key as a name, e.g. \"D major\"."
+  @spec key_name(t()) :: String.t()
+  def key_name(%__MODULE__{key: key}), do: Pitch.major_key_name(key)
+
+  defp check_bar!(events, number, beats) do
     total = events |> Enum.map(&event_beats/1) |> Enum.sum()
 
-    if abs(total - beats_per_bar) > 1.0e-6 do
-      raise ArgumentError, "bar #{number} has #{total} beats, expected #{beats_per_bar}"
+    if abs(total - beats) > 1.0e-6 do
+      raise ArgumentError, "bar #{number} has #{total} beats, expected #{beats}"
     end
   end
 
   defp event_beats({:rest, beats}), do: beats
   defp event_beats({:n, {_name, beats, _lyric}}), do: beats
 
-  defp place({:rest, beats}, offset, _number, _bar_start, _beat_ms), do: {[], offset + beats}
+  # Notes of one bar. `shown` tracks the alteration in force on each staff
+  # step, so an accidental prints once per bar, as on the page, and a return
+  # to the key signature's note gets its natural (or sharp/flat) back.
+  defp place_bar(events, number, bar_start, beat_ms, key) do
+    {notes, _} =
+      Enum.reduce(events, {[], {0.0, %{}}}, fn
+        {:rest, beats}, {acc, {offset, shown}} ->
+          {acc, {offset + beats, shown}}
 
-  defp place({:n, {name, beats, lyric}}, offset, number, bar_start, beat_ms) do
-    {slur, lyric} =
-      case lyric do
-        "~" <> rest -> {true, rest}
-        lyric -> {false, lyric}
-      end
+        {:n, {name, beats, lyric}}, {acc, {offset, shown}} ->
+          {slur, lyric} =
+            case lyric do
+              "~" <> rest -> {true, rest}
+              lyric -> {false, lyric}
+            end
 
-    note = %Note{
-      start_ms: bar_start + offset * beat_ms,
-      dur_ms: beats * beat_ms,
-      midi: Pitch.parse(name),
-      lyric: lyric,
-      bar: number,
-      beats: beats,
-      slur: slur
-    }
+          %{midi: midi, step: step, alter: alter} = Pitch.spell(name)
+          in_force = Map.get_lazy(shown, step, fn -> Pitch.key_alter(key, step) end)
 
-    {[note], offset + beats}
+          note = %Note{
+            start_ms: bar_start + offset * beat_ms,
+            dur_ms: beats * beat_ms,
+            midi: midi,
+            lyric: lyric,
+            bar: number,
+            beats: beats,
+            name: name,
+            step: step,
+            accidental: if(alter != in_force, do: accidental(alter)),
+            slur: slur
+          }
+
+          {[note | acc], {offset + beats, Map.put(shown, step, alter)}}
+      end)
+
+    Enum.reverse(notes)
   end
+
+  defp accidental(1), do: :sharp
+  defp accidental(-1), do: :flat
+  defp accidental(0), do: :natural
 
   @doc "End of the song in ms (end of its last bar)."
   @spec duration_ms(t()) :: float()
@@ -147,8 +196,8 @@ defmodule ChoirCoach.Song do
 
   @doc "Song times of every beat that starts in `[from_ms, to_ms]`, flagged when it opens a bar."
   @spec beats_between(t(), number(), number()) :: [{float(), boolean()}]
-  def beats_between(%__MODULE__{bars: bars, beats_per_bar: n}, from_ms, to_ms) do
-    for %{start_ms: s, dur_ms: d} <- bars,
+  def beats_between(%__MODULE__{bars: bars}, from_ms, to_ms) do
+    for %{start_ms: s, dur_ms: d, beats: n} <- bars,
         s <= to_ms and s + d >= from_ms,
         i <- 0..(n - 1),
         t = s + i * d / n,
@@ -156,9 +205,12 @@ defmodule ChoirCoach.Song do
         do: {t, i == 0}
   end
 
-  @doc "Milliseconds per beat."
-  @spec beat_ms(t()) :: float()
-  def beat_ms(%__MODULE__{tempo_bpm: tempo}), do: 60_000.0 / tempo
+  @doc "Milliseconds per beat in the bar playing at `t_ms`."
+  @spec beat_ms(t(), number()) :: float()
+  def beat_ms(song, t_ms) do
+    %{dur_ms: d, beats: n} = bar_at(song, t_ms)
+    d / n
+  end
 
   @doc "The note sounding at `t_ms`, or nil during a rest."
   @spec note_at(t(), number()) :: Note.t() | nil

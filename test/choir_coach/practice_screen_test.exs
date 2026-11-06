@@ -70,7 +70,7 @@ defmodule ChoirCoach.PracticeScreenTest do
     view = ready_view()
     song = assigns(view).song
     bar = Song.bar_start(song, 22)
-    beat = Song.beat_ms(song)
+    beat = Song.beat_ms(song, bar)
 
     mid = view |> put_time(bar + 2 * beat) |> render_info({:tap, :back_bar})
     assert assigns(mid).t_ms == bar

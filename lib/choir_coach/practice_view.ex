@@ -551,7 +551,7 @@ defmodule ChoirCoach.PracticeView do
   # ── Staff strip ──────────────────────────────────────────────────────────
 
   defp staff(frame, g) do
-    clef_w = Style.staff_clef_zone()
+    clef_w = clef_zone(frame.song, frame.t_ms)
     notes = Song.notes_between(frame.song, g.from_ms - 200, g.to_ms)
     active = Song.note_at(frame.song, frame.t_ms)
     color = feedback_color(frame.feedback)
@@ -567,7 +567,8 @@ defmodule ChoirCoach.PracticeView do
       rect(0, 0, clef_w, @strip_height, color: Style.bg(), fill: true),
       fade_strips(clef_w, Style.staff_clef_fade(), 0, @strip_height, :fade_out),
       staff_lines(0, clef_w),
-      bass_clef()
+      bass_clef(),
+      key_signature(Song.bar_at(frame.song, frame.t_ms).key)
     ]
   end
 
@@ -610,7 +611,7 @@ defmodule ChoirCoach.PracticeView do
 
   defp staff_note(note, active, feedback_color, g) do
     x = x_of(g, note.start_ms) + 10
-    step = Pitch.staff_step(note.midi)
+    step = note.step
     y = staff_y(step)
     is_active = note == active
 
@@ -625,13 +626,48 @@ defmodule ChoirCoach.PracticeView do
 
     [
       ledger_lines(x, step, color, opacity),
-      if(Pitch.accidental?(note.midi),
-        do: text(x - 16, y - 9, "♯", color: color, size: 14, opacity: opacity),
-        else: []
-      ),
+      accidental_glyph(note.accidental, x - 16, y, color, opacity),
       notehead(x, y, hollow, color, opacity),
       stem_for(x, y, step, color, opacity)
     ]
+  end
+
+  defp accidental_glyph(nil, _x, _y, _color, _opacity), do: []
+
+  defp accidental_glyph(kind, x, y, color, opacity) do
+    {glyph, dy} = Map.fetch!(%{sharp: {"♯", 9}, flat: {"♭", 12}, natural: {"♮", 9}}, kind)
+    text(x, y - dy, glyph, color: color, size: 14, opacity: opacity)
+  end
+
+  # Key signature glyphs sit after the clef, 7 dp apart, on the bass-clef
+  # lines and spaces engravers use (sharps F C G D A E B, flats B E A D G C F).
+  @key_x 44.0
+  @key_spacing 7.0
+  @bass_sharps Enum.map(~w(F3 C3 G3 D3 A2 E3 B2), &Pitch.spell(&1).step)
+  @bass_flats Enum.map(~w(B2 E3 A2 D3 G2 C3 F2), &Pitch.spell(&1).step)
+
+  defp key_signature(0), do: []
+
+  defp key_signature(fifths) do
+    {glyph, steps, dy} =
+      if fifths > 0, do: {"♯", @bass_sharps, 9}, else: {"♭", @bass_flats, 12}
+
+    steps
+    |> Enum.take(abs(fifths))
+    |> Enum.with_index()
+    |> Enum.map(fn {step, i} ->
+      text(@key_x + i * @key_spacing, staff_y(step) - dy, glyph,
+        color: Style.neutral(),
+        size: 14,
+        opacity: 0.85
+      )
+    end)
+  end
+
+  # The clef zone widens to hold the key signature in force at `t`.
+  defp clef_zone(song, t) do
+    n = abs(Song.bar_at(song, t).key)
+    max(Style.staff_clef_zone(), @key_x + n * @key_spacing + 8)
   end
 
   # 13 × 9.6 ellipse rotated −20°, as a 12-point polygon.
@@ -710,14 +746,12 @@ defmodule ChoirCoach.PracticeView do
 
   # Rest glyphs at every silent gap of half a beat or more.
   defp rests(song, g) do
-    beat = Song.beat_ms(song)
-
     song
     |> gaps()
-    |> Enum.filter(fn {from, to} ->
-      to - from >= beat * 0.45 and from <= g.to_ms and to >= g.from_ms
-    end)
-    |> Enum.map(fn {from, to} -> rest_glyph(x_of(g, from) + 10, (to - from) / beat) end)
+    |> Enum.filter(fn {from, to} -> from <= g.to_ms and to >= g.from_ms end)
+    |> Enum.map(fn {from, to} -> {from, to, Song.beat_ms(song, from)} end)
+    |> Enum.filter(fn {from, to, beat} -> to - from >= beat * 0.45 end)
+    |> Enum.map(fn {from, to, beat} -> rest_glyph(x_of(g, from) + 10, (to - from) / beat) end)
   end
 
   defp gaps(%Song{notes: notes} = song) do
@@ -799,7 +833,7 @@ defmodule ChoirCoach.PracticeView do
         size: size,
         weight: :bold
       ),
-      text(x, lyric_y + size + 4, Pitch.name(note.midi),
+      text(x, lyric_y + size + 4, Pitch.display(note.name),
         color: Style.text_secondary(),
         size: Style.type(:expected_note),
         weight: :bold
@@ -817,7 +851,7 @@ defmodule ChoirCoach.PracticeView do
       next ->
         lyric = display_lyric(next.lyric)
         size = fit_size(lyric, Style.type(:active_lyric), max_w - 44)
-        beats = (next.start_ms - frame.t_ms) / Song.beat_ms(frame.song)
+        beats = (next.start_ms - frame.t_ms) / Song.beat_ms(frame.song, next.start_ms)
         name_y = lyric_y + size + 4
 
         [
@@ -828,7 +862,7 @@ defmodule ChoirCoach.PracticeView do
             weight: :bold
           ),
           text(x + 40, lyric_y, lyric, color: Style.text_primary(), size: size, weight: :bold),
-          text(x, name_y, Pitch.name(next.midi),
+          text(x, name_y, Pitch.display(next.name),
             color: Style.text_secondary(),
             size: Style.type(:expected_note),
             weight: :bold

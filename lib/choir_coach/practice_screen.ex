@@ -227,7 +227,7 @@ defmodule ChoirCoach.PracticeScreen do
   def subtitle(%{listening: :playback}), do: "Test mode: listening to the track itself"
 
   def subtitle(%{song: song}) do
-    "Bars #{hd(song.bars).number}–#{List.last(song.bars).number} · #{song.key_name} · ♩ = #{song.tempo_bpm}"
+    "Bars #{hd(song.bars).number}–#{List.last(song.bars).number} · #{Song.key_name(song)} · ♩ = #{song.tempo_bpm}"
   end
 
   # ── Events ───────────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ defmodule ChoirCoach.PracticeScreen do
     previous = Song.bar_before(a.song, bar.number)
     # Within the first beat of a bar, step to the previous bar's start.
     target =
-      if a.t_ms - bar.start_ms < bar.dur_ms / a.song.beats_per_bar,
+      if a.t_ms - bar.start_ms < bar.dur_ms / bar.beats,
         do: if(previous, do: previous.start_ms, else: bar.start_ms),
         else: bar.start_ms
 
