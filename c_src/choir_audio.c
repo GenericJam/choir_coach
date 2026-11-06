@@ -592,7 +592,12 @@ static int32_t output_cb(AAudioStream *s, void *user, void *data, int32_t frames
             default: l = a * ag; r = b * ag; mix = -1.0f; break;
             }
             if (mix != -1.0f) l = r = mix;
-            if (listen_playback && mono_n < 1024) mono[mono_n++] = 0.5f * (a + b);
+            /* Test mode hears what the singer should match: the part's voice
+             * channel (the whole mix for a mixed track), not the band. */
+            if (listen_playback && mono_n < 1024)
+                mono[mono_n++] = layout == LAYOUT_VOICE_LEFT    ? a
+                                 : layout == LAYOUT_VOICE_RIGHT ? b
+                                                                : 0.5f * (a + b);
             frame++;
         } else if (listen_playback && mono_n < 1024) {
             mono[mono_n++] = 0.0f;

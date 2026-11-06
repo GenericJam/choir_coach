@@ -2,13 +2,12 @@ defmodule ChoirCoach.PracticeScreenTest do
   use Mob.ScreenCase, async: true
 
   alias ChoirCoach.Audio.Fake
-  alias ChoirCoach.{PracticeScreen, Song}
+  alias ChoirCoach.{PracticeScreen, Song, Songs}
   alias ChoirCoach.Songs.GloriousNight
 
   @params %{
     screen: {411.0, 914.0},
-    song: GloriousNight.bass(),
-    tracks: GloriousNight.tracks()
+    parts: Songs.parts(GloriousNight)
   }
 
   # Mount and deliver the engine's ready message (the fake sends it on load).
@@ -28,11 +27,6 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert assigns(view).listening == :mic
     refute assigns(view).playing
     assert_renderable(view)
-  end
-
-  test "play is ignored until the track is ready" do
-    view = PracticeScreen |> mount_screen(@params) |> render_info({:tap, :play_pause})
-    refute assigns(view).playing
   end
 
   test "restart while playing keeps a single frame loop" do
@@ -84,7 +78,7 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert assigns(early).t_ms == Song.bar_start(song, 21)
   end
 
-  test "the part pill cycles tracks and resumes at the same place once loaded" do
+  test "the track pill cycles tracks and resumes at the same place once loaded" do
     view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
 
     switched = render_info(view, {:tap, :track})
@@ -101,6 +95,82 @@ defmodule ChoirCoach.PracticeScreenTest do
       |> Enum.map(&assigns(&1).track_mode)
 
     assert modes == [:split, :demo, :piano]
+  end
+
+  test "the part pill switches to the melody at the same place, on the same kind of track" do
+    view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
+    bass_center = assigns(view).center_midi
+
+    switched = render_info(view, {:tap, :part})
+    a = assigns(switched)
+    assert {a.part, a.song.part, a.song.clef} == {:melody, :melody, :treble}
+    assert a.track_mode == :piano and a.tracks.piano.file =~ "piano_melody"
+    assert a.audio_status == :loading
+    refute a.playing
+    assert a.trace == []
+    # The pitch roll recentres on the melody, an octave or so above the bass.
+    assert a.center_midi > bass_center + 7
+
+    resumed = render_info(switched, {:choir_audio, :ready, %{}})
+    assert assigns(resumed).playing
+    assert_in_delta assigns(resumed).t_ms, 40_000.0, 50
+    assert_renderable(resumed)
+
+    assert assigns(render_info(resumed, {:tap, :part})).part == :bass
+  end
+
+  test "switching again while the track loads still resumes where playback was" do
+    view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
+
+    resumed =
+      view
+      |> render_info({:tap, :part})
+      |> render_info({:tap, :track})
+      |> render_info({:choir_audio, :ready, %{}})
+
+    assert {assigns(resumed).part, assigns(resumed).track_mode} == {:melody, :rehearsal}
+    assert assigns(resumed).playing
+    assert_in_delta assigns(resumed).t_ms, 40_000.0, 50
+  end
+
+  test "test mode keeps listening to the track across a part switch" do
+    view = ready_view() |> render_info({:listen, :playback})
+    assert assigns(view).listening == :playback
+
+    switched = view |> render_info({:tap, :part}) |> render_info({:choir_audio, :ready, %{}})
+    assert assigns(switched).listening == :playback
+  end
+
+  test "while a switch loads, pause cancels the resume and a seek moves it" do
+    loading =
+      ready_view()
+      |> put_time(40_000.0)
+      |> render_info({:tap, :play_pause})
+      |> render_info({:tap, :track})
+
+    # The button shows pause while the start is pending, and play once cancelled.
+    assert PracticeScreen.shows_pause?(assigns(loading))
+    cancelled = render_info(loading, {:tap, :play_pause})
+    refute PracticeScreen.shows_pause?(assigns(cancelled))
+    refute assigns(render_info(cancelled, {:choir_audio, :ready, %{}})).playing
+
+    moved = loading |> render_info({:seek, 60_000.0}) |> render_info({:choir_audio, :ready, %{}})
+    assert assigns(moved).playing
+    assert_in_delta assigns(moved).t_ms, 60_000.0, 50
+  end
+
+  test "play before the track is ready starts it once loaded; test mode too" do
+    view =
+      PracticeScreen
+      |> mount_screen(@params)
+      |> render_info({:tap, :play_pause})
+      |> render_info({:listen, :playback})
+
+    refute assigns(view).playing
+    assert PracticeScreen.shows_pause?(assigns(view))
+    ready = render_info(view, {:choir_audio, :ready, %{}})
+    assert assigns(ready).playing
+    assert assigns(ready).listening == :playback
   end
 
   test "a track that fails to load says so" do

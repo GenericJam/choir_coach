@@ -2,7 +2,7 @@ defmodule ChoirCoach.SettingsScreenTest do
   # Mob.State is one shared store; these tests write to it.
   use Mob.ScreenCase, async: false
 
-  alias ChoirCoach.{PracticeScreen, Settings, SettingsScreen}
+  alias ChoirCoach.{PracticeScreen, Settings, SettingsScreen, Songs}
   alias ChoirCoach.Songs.GloriousNight
 
   setup do
@@ -41,11 +41,7 @@ defmodule ChoirCoach.SettingsScreenTest do
   test "the practice screen's gear pauses and opens settings" do
     view =
       PracticeScreen
-      |> mount_screen(%{
-        screen: {411.0, 914.0},
-        song: GloriousNight.bass(),
-        tracks: GloriousNight.tracks()
-      })
+      |> mount_screen(%{screen: {411.0, 914.0}, parts: Songs.parts(GloriousNight)})
       |> render_info({:choir_audio, :ready, %{}})
       |> render_info({:tap, :play_pause})
       |> render_info({:tap, :settings})

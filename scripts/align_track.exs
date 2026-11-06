@@ -2,7 +2,7 @@
 # against what is sung on it.
 #
 #   cc -O2 -o /tmp/pitch_host c_src/test/pitch_host.c -lm
-#   MIX_ENV=test mix run --no-start scripts/align_track.exs HolyForever [rehearsal] [left|right]
+#   [PART=melody] MIX_ENV=test mix run --no-start scripts/align_track.exs HolyForever [rehearsal] [left|right]
 #
 # Runs the app's YIN detector over one channel of the track (default: the
 # track's voice channel), then:
@@ -23,9 +23,10 @@ alias ChoirCoach.{Pitch, Song}
 
 [mod | rest] = System.argv()
 module = Module.concat(ChoirCoach.Songs, mod)
+part = String.to_atom(System.get_env("PART", "bass"))
 track_key = rest |> Enum.at(0, "rehearsal") |> String.to_atom()
-song = module.bass()
-track = Map.fetch!(module.tracks(), track_key)
+song = apply(module, part, [])
+track = Map.fetch!(module.tracks(part), track_key)
 channel = Enum.at(rest, 1) || Atom.to_string(track.voice)
 path = ChoirCoach.Audio.track_path(track.file) |> Path.expand()
 path = if File.exists?(path), do: path, else: Path.join("priv/audio", track.file)

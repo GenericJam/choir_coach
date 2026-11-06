@@ -1,15 +1,18 @@
 defmodule ChoirCoach.SongsScreenTest do
   use Mob.ScreenCase, async: true
 
-  alias ChoirCoach.{PracticeScreen, Song, Songs, SongsScreen}
+  alias ChoirCoach.{PracticeScreen, Songs, SongsScreen}
   alias ChoirCoach.Songs.ThisIsJesus
 
-  test "every song builds and its tracks name the files the app ships" do
+  test "every part builds on the song's one bar timeline and names files the app ships" do
     for module <- Songs.all() do
-      song = module.bass()
-      assert Song.duration_ms(song) > Song.start_ms(song)
-      assert %{rehearsal: %{file: file}} = module.tracks()
-      assert String.ends_with?(file, ".mp3")
+      bars = Enum.map(module.bass().bars, &{&1.number, &1.start_ms, &1.dur_ms})
+
+      for {_part, %{song: song, tracks: tracks}} <- Songs.parts(module) do
+        assert Enum.map(song.bars, &{&1.number, &1.start_ms, &1.dur_ms}) == bars
+        assert %{rehearsal: %{file: file}, piano: %{file: piano}} = tracks
+        assert String.ends_with?(file, ".mp3") and String.ends_with?(piano, ".mp3")
+      end
     end
   end
 

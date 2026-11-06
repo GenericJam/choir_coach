@@ -9,8 +9,9 @@ defmodule ChoirCoach.PracticeScreen do
   frame into the trace, advances the feedback smoother and re-renders.
 
   Controls: restart, back one bar, play / pause, loop the song, and the
-  accompaniment level. Tapping the part pill cycles the track: the part's
-  rehearsal track, the split track (full choir), or the demo.
+  accompaniment level. The header's part pill switches the part (Bass,
+  Melody) at the same song time; the track pill cycles the part's tracks:
+  piano, its rehearsal track, the split track (full choir), or the demo.
   """
 
   use Mob.Screen
@@ -42,14 +43,19 @@ defmodule ChoirCoach.PracticeScreen do
   @fallback_screen {390.0, 844.0}
 
   def mount(params, _session, socket) do
-    %{song: song, tracks: tracks} = params
+    # `parts`: each part's song and tracks, in order (`ChoirCoach.Songs.parts/1`).
+    parts = Map.fetch!(params, :parts)
+    part = Map.get(params, :part, parts |> hd() |> elem(0))
+    %{song: song, tracks: tracks} = Keyword.fetch!(parts, part)
     {w, h} = Map.get_lazy(params, :screen, &screen_size/0)
     engine = Audio.engine()
-    mode = hd(Enum.filter(@track_modes, &Map.has_key?(tracks, &1)))
+    mode = first_mode(tracks)
     first = hd(song.notes)
 
     socket =
       Mob.Socket.assign(socket,
+        parts: parts,
+        part: part,
         song: song,
         tracks: tracks,
         track_mode: mode,
@@ -63,6 +69,9 @@ defmodule ChoirCoach.PracticeScreen do
         resume_at: nil,
         mic: :unknown,
         listening: :off,
+        # What to listen to whenever a track is ready: the mic, or the track
+        # itself in test mode.
+        listen_source: :mic,
         screen_w: w,
         screen_h: h,
         playing: false,
@@ -145,7 +154,7 @@ defmodule ChoirCoach.PracticeScreen do
           <Canvas
             width={ControlsView.play_size()}
             height={ControlsView.play_size()}
-            draw={ControlsView.play_button(assigns.playing)}
+            draw={ControlsView.play_button(shows_pause?(assigns))}
             on_tap={play}
           />
           <Spacer />
@@ -172,9 +181,9 @@ defmodule ChoirCoach.PracticeScreen do
     song = assigns.song
     header_height = @header_height
     back_tap = {self(), :back}
+    part_tap = {self(), :part}
     track_tap = {self(), :track}
     settings_tap = {self(), :settings}
-    pill = part_name(song.part) <> " · " <> track_label(assigns.track_mode)
 
     ~MOB"""
     <Row height={header_height} padding_left={8} padding_right={20} align={:center}>
@@ -201,25 +210,32 @@ defmodule ChoirCoach.PracticeScreen do
           max_lines={1}
         />
       </Column>
-      <Box
-        background={0x24FFFFFF}
-        corner_radius={16}
-        padding={8}
-        fill_width={false}
-        on_tap={track_tap}
-      >
-        <Text
-          text={"● " <> pill}
-          text_size={Style.type(:status)}
-          text_color={Style.text_primary()}
-          font_weight="bold"
-        />
-      </Box>
+      {pill(part_name(song.part), part_tap)}
+      <Spacer size={6} />
+      {pill("● " <> track_label(assigns.track_mode), track_tap)}
       <Spacer size={8} />
       <Canvas width={32} height={32} draw={ControlsView.gear(32)} on_tap={settings_tap} />
     </Row>
     """
   end
+
+  defp pill(text, tap) do
+    ~MOB"""
+    <Box background={0x24FFFFFF} corner_radius={16} padding={8} fill_width={false} on_tap={tap}>
+      <Text
+        text={text}
+        text_size={Style.type(:status)}
+        text_color={Style.text_primary()}
+        font_weight="bold"
+      />
+    </Box>
+    """
+  end
+
+  @doc false
+  # The play button shows pause while playing or while a start is pending
+  # (a track loading after a switch): tapping it then stops either.
+  def shows_pause?(assigns), do: assigns.playing or assigns.resume_at != nil
 
   @doc false
   # The header's second line: what's wrong if anything is, else the song facts.
@@ -242,8 +258,10 @@ defmodule ChoirCoach.PracticeScreen do
     {:noreply, Mob.Socket.pop_screen(socket)}
   end
 
+  # While a track loads, play / pause toggles whether it starts once ready.
   def handle_info({:tap, :play_pause}, socket) do
-    if socket.assigns.playing, do: {:noreply, pause(socket)}, else: {:noreply, play(socket)}
+    a = socket.assigns
+    if a.playing or a.resume_at, do: {:noreply, pause(socket)}, else: {:noreply, play(socket)}
   end
 
   def handle_info({:tap, :restart}, socket) do
@@ -276,17 +294,27 @@ defmodule ChoirCoach.PracticeScreen do
     a = socket.assigns
     modes = Enum.filter(@track_modes, &Map.has_key?(a.tracks, &1))
     next = Enum.at(modes, rem(Enum.find_index(modes, &(&1 == a.track_mode)) + 1, length(modes)))
-    resume = if a.playing, do: a.t_ms
-    socket = if a.playing, do: pause(socket), else: socket
+    {:noreply, load_track(socket, next)}
+  end
 
-    {:noreply,
-     Mob.Socket.assign(socket,
-       track_mode: next,
-       audio: a.engine.load(socket.assigns.audio, a.tracks[next]),
-       audio_status: :loading,
-       listening: :off,
-       resume_at: resume
-     )}
+  # Next part at the same song time (the parts share the bar timeline): the
+  # track kind carries over, the new part's notes take the staff, readings
+  # and engine (the host engine's singer sings the part shown).
+  def handle_info({:tap, :part}, socket) do
+    a = socket.assigns
+    names = Keyword.keys(a.parts)
+    next = Enum.at(names, rem(Enum.find_index(names, &(&1 == a.part)) + 1, length(names)))
+    %{song: song, tracks: tracks} = Keyword.fetch!(a.parts, next)
+    mode = if Map.has_key?(tracks, a.track_mode), do: a.track_mode, else: first_mode(tracks)
+    near = Song.note_at(song, a.t_ms) || Song.next_note(song, a.t_ms) || hd(song.notes)
+    audio = song |> a.engine.new() |> a.engine.set_mic_delay(Settings.mic_delay_ms())
+
+    socket =
+      socket
+      |> Mob.Socket.assign(part: next, song: song, tracks: tracks, center_midi: near.midi * 1.0)
+      |> load_track(mode, audio)
+
+    {:noreply, reset_trace(socket)}
   end
 
   def handle_info({:choir_audio, :ready, _info}, socket) do
@@ -311,7 +339,8 @@ defmodule ChoirCoach.PracticeScreen do
   # The gear: pause (nothing to watch while adjusting) and open settings,
   # which report changes straight back here.
   def handle_info({:tap, :settings}, socket) do
-    socket = if socket.assigns.playing, do: pause(socket), else: socket
+    a = socket.assigns
+    socket = if a.playing or a.resume_at, do: pause(socket), else: socket
     {:noreply, Mob.Socket.push_screen(socket, SettingsScreen, %{practice: self()})}
   end
 
@@ -326,9 +355,14 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   # Device test hook: analyse the track itself instead of the microphone
-  # (`send(pid, {:listen, :playback})`), or go back to `:mic`.
+  # (`send(pid, {:listen, :playback})`), or go back to `:mic`. Kept across
+  # track and part switches; while a track loads it starts once it's ready.
   def handle_info({:listen, source}, socket) when source in [:mic, :playback] do
-    {:noreply, listen(socket, source)}
+    socket = Mob.Socket.assign(socket, :listen_source, source)
+
+    if socket.assigns.audio_status == :ready,
+      do: {:noreply, listen(socket, source)},
+      else: {:noreply, Mob.Socket.assign(socket, :listening, :off)}
   end
 
   def handle_info(:tick, socket) do
@@ -359,7 +393,30 @@ defmodule ChoirCoach.PracticeScreen do
 
   # ── Playback ─────────────────────────────────────────────────────────────
 
-  defp play(%{assigns: %{audio_status: status}} = socket) when status != :ready, do: socket
+  defp first_mode(tracks), do: Enum.find(@track_modes, &Map.has_key?(tracks, &1))
+
+  # Load the `mode` track into `audio` (the current engine state unless a
+  # part switch brings a new one). Playing pauses now and resumes at the same
+  # song time once the track is ready; a resume still pending from an earlier
+  # load (switching again while loading, or after a failed load) carries over.
+  defp load_track(socket, mode, audio \\ nil) do
+    a = socket.assigns
+    resume = if a.playing, do: a.t_ms, else: a.resume_at
+    socket = if a.playing, do: pause(socket), else: socket
+    audio = audio || socket.assigns.audio
+
+    Mob.Socket.assign(socket,
+      track_mode: mode,
+      audio: a.engine.load(audio, socket.assigns.tracks[mode]),
+      audio_status: :loading,
+      listening: :off,
+      resume_at: resume
+    )
+  end
+
+  # Not ready (loading, or a load that failed): play from here once a track is.
+  defp play(%{assigns: %{audio_status: status}} = socket) when status != :ready,
+    do: Mob.Socket.assign(socket, :resume_at, socket.assigns.t_ms)
 
   defp play(socket) do
     a = socket.assigns
@@ -379,6 +436,7 @@ defmodule ChoirCoach.PracticeScreen do
     end
   end
 
+  # Also drops a pending start: pausing while a track loads means stay paused.
   defp pause(socket) do
     a = socket.assigns
     keep_awake(false)
@@ -386,13 +444,18 @@ defmodule ChoirCoach.PracticeScreen do
 
     socket
     |> cancel_tick()
-    |> Mob.Socket.assign(audio: audio, playing: false)
+    |> Mob.Socket.assign(audio: audio, playing: false, resume_at: nil)
   end
 
   defp seek(socket, t) do
-    if socket.assigns.playing,
-      do: socket |> Mob.Socket.assign(:t_ms, t) |> play(),
-      else: socket |> Mob.Socket.assign(:t_ms, t) |> reset_trace()
+    a = socket.assigns
+
+    cond do
+      a.playing -> socket |> Mob.Socket.assign(:t_ms, t) |> play()
+      # Loading with a start pending: it starts at the new place.
+      a.resume_at -> socket |> Mob.Socket.assign(t_ms: t, resume_at: t) |> reset_trace()
+      true -> socket |> Mob.Socket.assign(:t_ms, t) |> reset_trace()
+    end
   end
 
   defp reset_trace(socket), do: Mob.Socket.assign(socket, trace: [], feedback: Feedback.new())
@@ -407,6 +470,11 @@ defmodule ChoirCoach.PracticeScreen do
       do: Mob.Permissions.request(socket, :microphone),
       else: Mob.Socket.assign(socket, :mic, :granted)
   end
+
+  defp maybe_listen(
+         %{assigns: %{audio_status: :ready, listening: :off, listen_source: :playback}} = socket
+       ),
+       do: listen(socket, :playback)
 
   defp maybe_listen(%{assigns: %{audio_status: :ready, mic: :granted, listening: :off}} = socket),
     do: listen(socket, :mic)
@@ -574,7 +642,6 @@ defmodule ChoirCoach.PracticeScreen do
   defp track_label(:split), do: "Choir"
   defp track_label(:demo), do: "Demo"
 
-  defp part_name(:bass), do: "Bass"
   defp part_name(part), do: part |> Atom.to_string() |> String.capitalize()
 
   defp clock(ms) do

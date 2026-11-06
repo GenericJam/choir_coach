@@ -3,22 +3,24 @@
 #
 #   brew install fluid-synth
 #   SOUNDFONT=~/.local/share/soundfonts/GeneralUser-GS.sf2 \
-#     MIX_ENV=test mix run --no-start scripts/render_piano.exs HolyForever
+#     MIX_ENV=test mix run --no-start scripts/render_piano.exs HolyForever [bass|melody]
 #
-# Writes priv/audio/<song>/piano.mp3 on the rehearsal track's timeline, laid
-# out like it: the piano left, the rehearsal track's accompaniment right, so
-# the practice screen's voice and accompaniment levels work the same. It is
-# gitignored like the recordings, since its right channel is theirs.
+# Writes priv/audio/<song>/piano_<part>.mp3 on the part's rehearsal track's
+# timeline, laid out like it: the piano left, the rehearsal track's
+# accompaniment right, so the practice screen's voice and accompaniment levels
+# work the same. It is gitignored like the recordings, since its right channel
+# is theirs.
 
 alias ChoirCoach.Song
 
-[mod] = System.argv()
+[mod | rest] = System.argv()
+part = rest |> Enum.at(0, "bass") |> String.to_atom()
 module = Module.concat(ChoirCoach.Songs, mod)
-song = module.bass()
-%{file: rehearsal, bar1_ms: bar1} = module.tracks().rehearsal
+song = apply(module, part, [])
+%{file: rehearsal, bar1_ms: bar1} = module.tracks(part).rehearsal
 soundfont = System.get_env("SOUNDFONT") || raise "set SOUNDFONT to a .sf2 file"
 rehearsal_path = Path.join("priv/audio", rehearsal)
-out = Path.join(Path.dirname(rehearsal_path), "piano.mp3")
+out = Path.join(Path.dirname(rehearsal_path), "piano_#{part}.mp3")
 # Song times are the rehearsal track's once bar 1 lines up.
 shift = bar1 - Song.start_ms(song)
 

@@ -1,7 +1,7 @@
 defmodule ChoirCoach.SongsScreen do
   @moduledoc """
   The app's first screen: the songs to practise. Tapping one opens the
-  practice screen on its bass part and recordings.
+  practice screen on its first part (bass), with every part to switch to.
   """
 
   use Mob.Screen
@@ -40,7 +40,7 @@ defmodule ChoirCoach.SongsScreen do
           font_weight="bold"
         />
         <Text
-          text="Bass · pick a song"
+          text="Pick a song"
           text_size={Style.type(:subtitle)}
           text_color={Style.text_tertiary()}
         />
@@ -75,15 +75,10 @@ defmodule ChoirCoach.SongsScreen do
   end
 
   def handle_info({:tap, {:open, module}}, socket) do
-    if module in Enum.map(socket.assigns.songs, & &1.module) do
-      {:noreply,
-       Mob.Socket.push_screen(socket, PracticeScreen, %{
-         song: module.bass(),
-         tracks: module.tracks()
-       })}
-    else
-      {:noreply, socket}
-    end
+    if module in Enum.map(socket.assigns.songs, & &1.module),
+      do:
+        {:noreply, Mob.Socket.push_screen(socket, PracticeScreen, %{parts: Songs.parts(module)})},
+      else: {:noreply, socket}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}

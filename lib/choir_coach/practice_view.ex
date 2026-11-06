@@ -42,10 +42,25 @@ defmodule ChoirCoach.PracticeView do
   @staff_lyric_rows [72.0, 87.0]
   @strip_height 106.0
 
-  # Bass clef: bottom line G2, middle line D3, top line A3.
-  @bass_bottom_line Pitch.staff_step(43)
-  @bass_middle_line Pitch.staff_step(50)
-  @bass_top_line Pitch.staff_step(57)
+  # Staff geometry per clef, as diatonic staff steps: the bottom, middle and
+  # top lines, and the lines and spaces engravers put the key signature on
+  # (sharps F C G D A E B, flats B E A D G C F).
+  @clefs %{
+    bass: %{
+      bottom: Pitch.spell("G2").step,
+      middle: Pitch.spell("D3").step,
+      top: Pitch.spell("A3").step,
+      sharps: Enum.map(~w(F3 C3 G3 D3 A2 E3 B2), &Pitch.spell(&1).step),
+      flats: Enum.map(~w(B2 E3 A2 D3 G2 C3 F2), &Pitch.spell(&1).step)
+    },
+    treble: %{
+      bottom: Pitch.spell("E4").step,
+      middle: Pitch.spell("B4").step,
+      top: Pitch.spell("F5").step,
+      sharps: Enum.map(~w(F5 C5 G5 D5 A4 E5 B4), &Pitch.spell(&1).step),
+      flats: Enum.map(~w(B4 E5 A4 D5 G4 C5 F4), &Pitch.spell(&1).step)
+    }
+  }
 
   @doc "All canvas ops for one frame."
   @spec ops(frame()) :: [map()]
@@ -551,6 +566,7 @@ defmodule ChoirCoach.PracticeView do
   # ── Staff strip ──────────────────────────────────────────────────────────
 
   defp staff(frame, g) do
+    clef = Map.fetch!(@clefs, frame.song.clef)
     clef_w = clef_zone(frame.song, frame.t_ms)
     notes = Song.notes_between(frame.song, g.from_ms - 200, g.to_ms)
     active = Song.note_at(frame.song, frame.t_ms)
@@ -560,15 +576,15 @@ defmodule ChoirCoach.PracticeView do
       rect(0, 0, g.width, @strip_height, color: Style.bg(), fill: true),
       active_column(active, color, g),
       staff_lines(0, g.width),
-      staff_bar_lines(frame.song, g),
-      rests(frame.song, g),
-      Enum.map(notes, &staff_note(&1, active, color, g)),
+      staff_bar_lines(frame.song, clef, g),
+      rests(frame.song, clef, g),
+      Enum.map(notes, &staff_note(&1, active, color, clef, g)),
       staff_lyrics(notes, active, g),
       rect(0, 0, clef_w, @strip_height, color: Style.bg(), fill: true),
       fade_strips(clef_w, Style.staff_clef_fade(), 0, @strip_height, :fade_out),
       staff_lines(0, clef_w),
-      bass_clef(),
-      key_signature(Song.bar_at(frame.song, frame.t_ms).key)
+      clef_glyph(frame.song.clef),
+      key_signature(Song.bar_at(frame.song, frame.t_ms).key, clef)
     ]
   end
 
@@ -593,16 +609,14 @@ defmodule ChoirCoach.PracticeView do
     end
   end
 
-  # Key signature glyphs sit after the clef, 7 dp apart, on the bass-clef
-  # lines and spaces engravers use (sharps F C G D A E B, flats B E A D G C F).
+  # Key signature glyphs sit after the clef, 7 dp apart, on the clef's
+  # key-signature steps (see @clefs).
   @key_x 44.0
   @key_spacing 7.0
-  @bass_sharps Enum.map(~w(F3 C3 G3 D3 A2 E3 B2), &Pitch.spell(&1).step)
-  @bass_flats Enum.map(~w(B2 E3 A2 D3 G2 C3 F2), &Pitch.spell(&1).step)
 
   # Bar lines, and where the key changes, the new signature just before the
   # line (naturals cancelling the old one when the new key has none).
-  defp staff_bar_lines(song, g) do
+  defp staff_bar_lines(song, clef, g) do
     song.bars
     |> Enum.chunk_every(2, 1, :discard)
     |> Enum.map(fn [prev, bar] -> {bar, if(bar.key != prev.key, do: prev.key)} end)
@@ -617,24 +631,24 @@ defmodule ChoirCoach.PracticeView do
           width: 1,
           opacity: Style.alpha(:staff_bar_line)
         ),
-        if(old_key, do: key_change(old_key, bar.key, x), else: [])
+        if(old_key, do: key_change(old_key, bar.key, x, clef), else: [])
       ]
     end)
   end
 
-  defp key_change(old_key, 0, x),
-    do: key_glyphs(old_key, x - 4 - abs(old_key) * @key_spacing, "♮")
+  defp key_change(old_key, 0, x, clef),
+    do: key_glyphs(old_key, x - 4 - abs(old_key) * @key_spacing, "♮", clef)
 
-  defp key_change(_old_key, key, x), do: key_glyphs(key, x - 4 - abs(key) * @key_spacing, nil)
+  defp key_change(_old_key, key, x, clef),
+    do: key_glyphs(key, x - 4 - abs(key) * @key_spacing, nil, clef)
 
-  defp staff_y(step),
-    do:
-      @staff_top + 4 * Style.staff_space() - (step - @bass_bottom_line) * Style.staff_space() / 2
+  defp staff_y(step, clef),
+    do: @staff_top + 4 * Style.staff_space() - (step - clef.bottom) * Style.staff_space() / 2
 
-  defp staff_note(note, active, feedback_color, g) do
+  defp staff_note(note, active, feedback_color, clef, g) do
     x = x_of(g, note.start_ms) + 10
     step = note.step
-    y = staff_y(step)
+    y = staff_y(step, clef)
     is_active = note == active
 
     {color, opacity} =
@@ -647,10 +661,10 @@ defmodule ChoirCoach.PracticeView do
     hollow = note.beats >= 2
 
     [
-      ledger_lines(x, step, color, opacity),
+      ledger_lines(x, step, color, opacity, clef),
       accidental_glyph(note.accidental, x - 16, y, color, opacity),
       notehead(x, y, hollow, color, opacity),
-      stem_for(x, y, step, color, opacity)
+      stem_for(x, y, step, color, opacity, clef)
     ]
   end
 
@@ -661,20 +675,20 @@ defmodule ChoirCoach.PracticeView do
     text(x, y - dy, glyph, color: color, size: 14, opacity: opacity)
   end
 
-  defp key_signature(fifths), do: key_glyphs(fifths, @key_x, nil)
+  defp key_signature(fifths, clef), do: key_glyphs(fifths, @key_x, nil, clef)
 
   # `fifths` sharps or flats from `x0` (or `glyph` in their places: naturals).
-  defp key_glyphs(0, _x0, _glyph), do: []
+  defp key_glyphs(0, _x0, _glyph, _clef), do: []
 
-  defp key_glyphs(fifths, x0, glyph) do
+  defp key_glyphs(fifths, x0, glyph, clef) do
     {sign, steps, dy} =
-      if fifths > 0, do: {"♯", @bass_sharps, 9}, else: {"♭", @bass_flats, 12}
+      if fifths > 0, do: {"♯", clef.sharps, 9}, else: {"♭", clef.flats, 12}
 
     steps
     |> Enum.take(abs(fifths))
     |> Enum.with_index()
     |> Enum.map(fn {step, i} ->
-      text(x0 + i * @key_spacing, staff_y(step) - if(glyph, do: 9, else: dy), glyph || sign,
+      text(x0 + i * @key_spacing, staff_y(step, clef) - if(glyph, do: 9, else: dy), glyph || sign,
         color: Style.neutral(),
         size: 14,
         opacity: 0.85
@@ -709,25 +723,20 @@ defmodule ChoirCoach.PracticeView do
     end
   end
 
-  defp stem_for(x, y, step, color, opacity) do
-    if step >= @bass_middle_line do
+  defp stem_for(x, y, step, color, opacity, clef) do
+    if step >= clef.middle do
       line(x - 6.0, y + 1, x - 6.0, y + 33, color: color, width: 1.4, opacity: opacity)
     else
       line(x + 6.0, y - 1, x + 6.0, y - 33, color: color, width: 1.4, opacity: opacity)
     end
   end
 
-  defp ledger_lines(x, step, color, opacity) do
-    above =
-      if step >= @bass_top_line + 2, do: Enum.to_list((@bass_top_line + 2)..step//2), else: []
-
-    below =
-      if step <= @bass_bottom_line - 2,
-        do: Enum.to_list((@bass_bottom_line - 2)..step//-2),
-        else: []
+  defp ledger_lines(x, step, color, opacity, clef) do
+    above = if step >= clef.top + 2, do: Enum.to_list((clef.top + 2)..step//2), else: []
+    below = if step <= clef.bottom - 2, do: Enum.to_list((clef.bottom - 2)..step//-2), else: []
 
     for s <- above ++ below do
-      y = staff_y(s)
+      y = staff_y(s, clef)
 
       line(x - 7, y, x + 7, y,
         color: color,
@@ -763,13 +772,15 @@ defmodule ChoirCoach.PracticeView do
   end
 
   # Rest glyphs at every silent gap of half a beat or more.
-  defp rests(song, g) do
+  defp rests(song, clef, g) do
     song
     |> gaps()
     |> Enum.filter(fn {from, to} -> from <= g.to_ms and to >= g.from_ms end)
     |> Enum.map(fn {from, to} -> {from, to, Song.beat_ms(song, from)} end)
     |> Enum.filter(fn {from, to, beat} -> to - from >= beat * 0.45 end)
-    |> Enum.map(fn {from, to, beat} -> rest_glyph(x_of(g, from) + 10, (to - from) / beat) end)
+    |> Enum.map(fn {from, to, beat} ->
+      rest_glyph(x_of(g, from) + 10, (to - from) / beat, clef)
+    end)
   end
 
   defp gaps(%Song{notes: notes} = song) do
@@ -781,12 +792,12 @@ defmodule ChoirCoach.PracticeView do
     |> Enum.filter(fn {from, to} -> to - from > 1.0 end)
   end
 
-  defp rest_glyph(x, beats) when beats >= 2 do
-    middle = staff_y(@bass_middle_line)
+  defp rest_glyph(x, beats, clef) when beats >= 2 do
+    middle = staff_y(clef.middle, clef)
     rect(x - 5, middle - 5, 10, 5, color: Style.neutral(), fill: true, opacity: 0.6)
   end
 
-  defp rest_glyph(x, _beats) do
+  defp rest_glyph(x, _beats, _clef) do
     top = @staff_top + Style.staff_space()
 
     path([{x - 2, top}, {x + 3, top + 6}, {x - 2, top + 11}, {x + 3, top + 17}, {x, top + 20}],
@@ -798,7 +809,7 @@ defmodule ChoirCoach.PracticeView do
     )
   end
 
-  defp bass_clef do
+  defp clef_glyph(:bass) do
     f_line = @staff_top + Style.staff_space()
 
     [
@@ -822,6 +833,73 @@ defmodule ChoirCoach.PracticeView do
       ),
       circle(37, f_line - 5, 1.8, color: Style.neutral(), fill: true, opacity: 0.85),
       circle(37, f_line + 5, 1.8, color: Style.neutral(), fill: true, opacity: 0.85)
+    ]
+  end
+
+  # G clef: the curl wraps the G line (second from the bottom), the stroke
+  # rises to a loop above the staff and falls through the curl to a tail.
+  # Control points as {x, dy from the G line}, rounded at compile time by two
+  # passes of Chaikin corner cutting (ends kept).
+  @g_line @staff_top + 3 * Style.staff_space()
+  @treble_clef_controls [
+    {24, 2},
+    {21, 0},
+    {21.5, -4},
+    {25, -6.5},
+    {29.5, -4.5},
+    {31, 1},
+    {28.5, 6.5},
+    {22, 8.5},
+    {16, 6},
+    {13, 0},
+    {14.5, -7},
+    {20, -14},
+    {25.5, -21},
+    {28, -28},
+    {27.5, -35},
+    {25, -39.5},
+    {22.5, -37},
+    {21, -30},
+    {21.5, -22},
+    {24.5, 16},
+    {23.5, 21},
+    {20, 22.5},
+    {17, 21}
+  ]
+
+  chaikin = fn pts ->
+    cut =
+      pts
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.flat_map(fn [{x0, y0}, {x1, y1}] ->
+        [
+          {0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1},
+          {0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1}
+        ]
+      end)
+
+    [hd(pts) | cut] ++ [List.last(pts)]
+  end
+
+  stroke =
+    @treble_clef_controls
+    |> Enum.map(fn {x, dy} -> {x * 1.0, @g_line + dy} end)
+    |> chaikin.()
+    |> chaikin.()
+    |> Enum.map(fn {x, y} -> {Float.round(x, 1), Float.round(y, 1)} end)
+
+  @treble_clef_stroke stroke
+
+  defp clef_glyph(:treble) do
+    [
+      path(@treble_clef_stroke,
+        color: Style.neutral(),
+        width: 2.6,
+        cap: :round,
+        join: :round,
+        opacity: 0.85
+      ),
+      circle(18.5, @g_line + 19.5, 3.2, color: Style.neutral(), fill: true, opacity: 0.85)
     ]
   end
 
