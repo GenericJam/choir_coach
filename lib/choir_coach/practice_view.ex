@@ -80,6 +80,27 @@ defmodule ChoirCoach.PracticeView do
     ])
   end
 
+  @compact_height 150.0
+
+  @doc "Height of the compact canvas: the staff strip and one status line."
+  def compact_height, do: @compact_height
+
+  @doc """
+  The canvas while the mix sheet covers the roll: the staff strip, then one
+  status line (the status pill, the syllable and its note) so the feedback
+  stays live while the singer adjusts what they hear.
+  """
+  @spec compact_ops(frame()) :: [map()]
+  def compact_ops(frame) do
+    g = geometry(%{frame | height: @compact_height})
+
+    List.flatten([
+      rect(0, 0, g.width, @compact_height, color: Style.bg(), fill: true),
+      staff(frame, g),
+      status_line(frame)
+    ])
+  end
+
   @doc """
   Geometry shared by every layer: the time and pitch scales and the
   playhead / roll positions for this canvas size. The time scale is the
@@ -974,6 +995,56 @@ defmodule ChoirCoach.PracticeView do
   defp in_beats(beats) when beats <= 1.05, do: "in 1 beat"
   defp in_beats(beats), do: "in #{round(beats)} beats"
 
+  defp status_line(frame) do
+    x = Style.side_gutter()
+    y = @strip_height + 6
+
+    {label, icon, color, note, prefix} =
+      case {frame.feedback.status, Song.note_at(frame.song, frame.t_ms)} do
+        {status, note} when status != :breathe and note != nil ->
+          c = Style.cents_color(frame.feedback.color_cents)
+          {status_label(status), status_icon(status), c, note, nil}
+
+        _ ->
+          {"Breathe", :dashes, Style.neutral(), Song.next_note(frame.song, frame.t_ms), "Next"}
+      end
+
+    pill_w = pill_width(label)
+    lyric_x = x + pill_w + 14
+
+    List.flatten([
+      status_pill(x, y, label, icon, color),
+      status_note(prefix, note, lyric_x, y)
+    ])
+  end
+
+  defp status_note(_prefix, nil, _x, _y), do: []
+
+  defp status_note(prefix, note, x, y) do
+    lyric = display_lyric(note.lyric)
+    lyric_size = 26
+    lead = if prefix, do: 40, else: 0
+    name_x = x + lead + text_width(lyric, lyric_size) + 12
+
+    [
+      if(prefix,
+        do:
+          text(x, y + 9, prefix,
+            color: Style.text_tertiary(),
+            size: Style.type(:subtitle),
+            weight: :bold
+          ),
+        else: []
+      ),
+      text(x + lead, y + 1, lyric, color: Style.text_primary(), size: lyric_size, weight: :bold),
+      text(name_x, y + 5, Pitch.display(note.name),
+        color: Style.text_secondary(),
+        size: 20,
+        weight: :bold
+      )
+    ]
+  end
+
   @doc "Status pill wording for a feedback status."
   @spec status_label(Feedback.status()) :: String.t()
   def status_label(:on_pitch), do: "On pitch"
@@ -987,9 +1058,11 @@ defmodule ChoirCoach.PracticeView do
   defp status_icon({dir, amount}), do: {dir, amount}
   defp status_icon(:breathe), do: :dashes
 
+  defp pill_width(label), do: 14 + 16 + 8 + text_width(label, Style.type(:status)) + 16
+
   defp status_pill(x, y, label, icon, color) do
     size = Style.type(:status)
-    w = 14 + 16 + 8 + text_width(label, size) + 16
+    w = pill_width(label)
 
     [
       rect(x, y, w, 32, color: color, fill: true, radius: 16, opacity: Style.alpha(:status_pill)),

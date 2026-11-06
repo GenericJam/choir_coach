@@ -24,7 +24,7 @@ seconds = String.to_integer(System.get_env("SECS", "10"))
 IO.inspect(:rpc.call(node, ChoirCoach.Audio.Nif, :info, []), label: "engine")
 
 a = Mob.Test.assigns(node)
-IO.puts("audio=#{inspect(a.audio_status)} mic=#{inspect(a.mic)} listening=#{inspect(a.listening)} track=#{a.track_mode}")
+IO.puts("audio=#{inspect(a.audio_status)} mic=#{inspect(a.mic)} listening=#{inspect(a.listening)} mix=#{ChoirCoach.Mix.caption(a.mix)}")
 
 if a.playing, do: Mob.Test.tap(node, :play_pause)
 Mob.Test.send_message(node, {:listen, source})

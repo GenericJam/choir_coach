@@ -61,31 +61,76 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
   the practice screen with `%{parts: Songs.parts(module)}`.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. The staff follows the song's
-  clef: bass for the bass, treble for the melody. `ChoirCoach.ControlsView`
-  draws the transport icons and progress track.
+  clef: bass for the bass, treble for the melody. `compact_ops/1` is the
+  staff plus one status line, shown while the mix sheet covers the roll.
+  `ChoirCoach.ControlsView` draws the transport icons, progress track and the
+  headphones icon; `ChoirCoach.MixView` the mix sheet's swatches and ear map.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
   wording, following the handoff's motion rules.
-- `ChoirCoach.Audio` — the engine contract (song-time play / pause / stop /
-  position / mix / listen / readings). `Audio.Native` wraps the
-  `choir_audio` NIF (`c_src/choir_audio.c`: AAudio playback and mic, NDK
+- `ChoirCoach.Mix` — pure: what the singer hears. A part's sources are rows
+  (`:part_piano` (bass only), `:voices` (the part's rehearsal track, left),
+  `:band` (its right)), each with on, level 0–100 and balance −100…100;
+  presets Rehearsal, Me in right ear, Full choir / Demo (whole recordings,
+  a single file), My mix. `load_spec/2` gives the engine's sources and
+  lanes; `lane_gains/2` the per-lane L/R gains (L = level·min(1, 1−b),
+  R = level·min(1, 1+b); mono averages). "Without me" needs voice stems,
+  which don't exist yet.
+- `ChoirCoach.Audio` — the engine contract (song-time load / play / pause /
+  stop / position / mix / listen / readings, devices). `Audio.Native` wraps
+  the `choir_audio` NIF (`c_src/choir_audio.c`: AAudio playback and mic, NDK
   decoder, YIN in `c_src/pitch_yin.c`; Android only, loaded with dlopen).
-  The NIF is one engine per app: leaving a song must `stop/1` it (music and
-  mic). Streams are torn down by state (`stop_and_close`): never free the
-  track buffer while a callback can still run.
-  `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`.
+  `load/2` takes up to 2 files on one timeline; each kept channel is a lane,
+  mixed in the output callback with per-lane L/R gains (`set_mix/2` after
+  every load). Devices come from Android's `AudioManager` over JNI (Mob's
+  `g_jvm`); `set_output/2` / `set_input/2` pick them. The NIF is one engine
+  per app with one holder process, enforced in the NIF under its lock:
+  `acquire/2` (`force` takes it from a live holder, stopping its music and
+  mic; otherwise `:busy` unless free or the holder died), `release/1`, and
+  every play/listen/read call from anyone else is refused (Native sends
+  that process `{:choir_audio, :not_owner, nil, hold}`), so a screen that
+  lost the engine can't touch its successor's load. `ChoirCoach.Audio.Lease`
+  (started in `App.on_start`) does the hand-back: the Audio screen borrows
+  the engine at mount (`Lease.borrow/1`, forced acquire) and releases it
+  on closing; a practice screen that hands it over (`{:tap, :audio}`),
+  finds it busy or loses it goes `attached: false` (no engine calls,
+  events and ticks dropped, device/delay messages only recorded) and
+  `Lease.await/1`s; when the borrower's process ends — popped, crashed or
+  killed, including Mob's crash-remount — the lease sends waiters
+  `{:audio_engine_reset}`, and the practice screen acquires again (or
+  waits again) and reloads at the same song time. Leaving a song releases
+  the engine. Output/input choices are saved in `Settings` with the device
+  key (ids change per boot), so a remounted practice screen keeps them.
+  Events are `{:choir_audio, event, payload, tag}` (load events tagged
+  with the load, `:mic_error` with the listening, `:not_owner` with the
+  holding); a screen acts on one only if `Audio.current?(state, event)`,
+  so a replaced load's late `:ready` can't reach the next. Streams are only
+  closed once quiet (`stop_and_close`); one that won't stop is kept open and
+  load fails with `:output_stuck`, leaving the old buffers in place: never
+  free a buffer while a callback can still run. Mic readings while nothing
+  plays come at a far-negative song time (for the level meter).
+  `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`, with
+  canned devices.
 - `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
   readings are octave-folded and gated to the written notes before they feed
-  the trace and feedback. The header's part pill switches Bass ⇄ Melody at
-  the same song time (same kind of track, new notes and engine state); the
-  track pill cycles piano, rehearsal, choir (split) and demo. The gear opens
-  `ChoirCoach.SettingsScreen`; `‹` (or system back) returns to the list, and
-  `terminate/2` stops the engine. Test mode (`{:listen, :playback}`) analyses
-  the track's voice channel, i.e. what the singer should match.
-- `ChoirCoach.Settings` — saved preferences in `Mob.State`. The headphone
-  delay (`:mic_delay_ms`, 0–400 ms in 10 ms steps) is how much earlier mic
-  readings were sung than they arrive; it differs between wired and
-  Bluetooth headphones, so the singer sets it. Settings sends changes to the
-  practice screen as `{:mic_delay, ms}`, which applies them to the engine.
+  the trace and feedback. Header: title and headphones icon (→ Audio), then
+  the facts with the current bar and the Bass | Melody switch (same song
+  time, that part's mix and engine state). Transport: restart, −1 bar,
+  play, loop, Mix (opens "What you hear"; its caption is the preset). A mix
+  change re-sets gains, or reloads in place when it needs other files. The
+  part's mix is saved when the sheet closes, the part changes or the song
+  is left. New headphones get one offer to set their delay. Test mode
+  (`{:listen, :playback}`) analyses the guide lane (the part on piano, or
+  the voices).
+- `ChoirCoach.AudioScreen` — output and microphone choice, the mic meter,
+  the headphone delay for the output in use (−/+), and "Set by singing
+  along" (`ChoirCoach.Calibration`: 8 clicks at 90 bpm, `priv/sounds/clicks_90.mp3`
+  from `scripts/make_sounds.sh`; the median onset delay, rounded to 10 ms;
+  retry under 5 onsets or a spread over 40 ms). It messages the practice
+  screen `{:audio_output, id}`, `{:audio_input, id}`, `{:mic_delay, ms}`.
+- `ChoirCoach.Settings` — saved preferences in `Mob.State`: the headphone
+  delay per output device (`"kind:name"`; how much earlier mic readings were
+  sung than they arrive; defaults Bluetooth 200 ms, wired and speaker 60),
+  the last mix and "My mix" per part, and whether the delay was offered.
 
 ## Audio files
 
@@ -99,15 +144,18 @@ and the part tracks can't be unmixed (each is its own vocal mix). Offsets
 live in each song's `tracks/1`. The melody's rehearsal track is the
 soprano's, since the tune is mostly theirs.
 
-`piano_<part>.mp3` is generated, not downloaded: the part as piano notes (as
+`piano_bass.mp3` is generated, not downloaded: the bass as piano notes (as
 at in-person rehearsal), left, over the rehearsal track's accompaniment,
-right, on the rehearsal track's timeline. It is the practice screen's
-default track. Regenerate it after any change to a part's notes or timing:
-`brew install fluid-synth`, get a General MIDI SoundFont (GeneralUser GS
-lives in `~/.local/share/soundfonts/` here), then
-`SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> <part>`.
-`PART=<part> ALIGN_FIT=0 scripts/align_track.exs <Module> piano` checks it:
-every note on pitch.
+right, on the rehearsal track's timeline: the mixer's "Bass on piano" row.
+The melody has no piano: its notes are canonical (transcribed, checked
+against the recordings) for the pitch checking, and the closest recordings
+are the Soprano rehearsal track and the demo. Regenerate the piano after any
+change to the bass's notes or timing: `brew install fluid-synth`, get a
+General MIDI SoundFont (GeneralUser GS lives in
+`~/.local/share/soundfonts/` here), then
+`SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> bass`.
+`ALIGN_FIT=0 scripts/align_track.exs <Module> piano` checks it: every note
+on pitch.
 
 ## Adding a song
 
@@ -133,8 +181,8 @@ every note on pitch.
 5. Split and Demo offsets: cross-correlate onset envelopes against the
    rehearsal track (they share the accompaniment); check the lag holds in
    every 30 s window.
-6. `scripts/render_piano.exs <Module> <part>` renders `piano_<part>.mp3` for
-   each part; `tracks/1` points at it with the rehearsal track's `bar1_ms`.
+6. `scripts/render_piano.exs <Module> bass` renders `piano_bass.mp3`;
+   `tracks(:bass)` points at it with the rehearsal track's `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
 
 ## Working on it

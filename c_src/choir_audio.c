@@ -4,13 +4,14 @@
  *
  * One engine per app:
  *
- *   decoder thread   AMediaExtractor + AMediaCodec decode the rehearsal track
- *                    into an in-memory 16-bit stereo buffer, progressively, so
- *                    playback can start before the whole file is decoded.
- *   output callback  AAudio low-latency output. Plays the buffer, mixing the
- *                    track's voice and accompaniment channels with their own
- *                    gains into both ears, and records where each segment of
- *                    the track started in stream frames (the clock mapping).
+ *   decoder threads  One per source file (up to two): AMediaExtractor +
+ *                    AMediaCodec decode it progressively into in-memory
+ *                    16-bit mono buffers, one per kept channel ("lane"), so
+ *                    playback can start before the files are decoded.
+ *   output callback  AAudio low-latency output. Mixes the lanes into both
+ *                    ears, each with its own left and right gain, and records
+ *                    where each segment of the song started in stream frames
+ *                    (the clock mapping).
  *   input callback   AAudio microphone (VOICE_RECOGNITION preset: no AGC or
  *                    noise suppression bending the pitch) into a lock-free ring.
  *   analysis thread  YIN (pitch_yin.c) every 10 ms. Each reading is stamped
@@ -18,20 +19,27 @@
  *                    captured: input timestamp → CLOCK_MONOTONIC → output
  *                    timestamp → track frame.
  *
- * Song time on the BEAM side is track time; the Elixir wrapper converts.
+ * Every source shares one timeline (frame n of each plays together) and one
+ * sample rate. Song time on the BEAM side is track time; the Elixir wrapper
+ * converts.
  *
  * AAudio and libmediandk are opened with dlopen: the app links against
  * android-24 headers, where AAudio (API 26) doesn't exist, while the app's
- * minSdk is 28, so both libraries are always present at run time.
+ * minSdk is 28, so both libraries are always present at run time. The audio
+ * device list comes from Java (AudioManager.getDevices) through the JVM and
+ * activity Mob's JNI glue exports.
  *
- * Every NIF here returns quickly: no decoding, analysis or waiting on a
- * scheduler thread. Results the BEAM needs asynchronously arrive as messages
- * {choir_audio, Event, Payload} to the process that called load/1.
+ * NIFs that can block (decoder joins, stream open/stop/close, JNI) run on
+ * dirty IO schedulers; the rest return at once. One process holds the
+ * engine (acquire/1, release/0) and only it may play, listen or read.
+ * Results the BEAM needs asynchronously arrive at the holder as messages
+ * {choir_audio, Event, Payload, Tag}.
  */
 
 #include <dlfcn.h>
 #include <erl_nif.h>
 #include <fcntl.h>
+#include <jni.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -51,6 +59,10 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+/* Defined by the app's JNI glue (beam_jni.c, see deps/mob/android/jni/mob_beam.h). */
+extern JavaVM *g_jvm;
+extern jobject g_activity;
+
 /* ── AAudio, declared by hand (see header comment) ───────────────────────── */
 
 typedef struct AAudioStreamBuilderStruct AAudioStreamBuilder;
@@ -61,6 +73,7 @@ typedef void (*aa_error_cb)(AAudioStream *, void *, aaudio_result_t);
 
 enum {
     AA_OK = 0,
+    AA_UNSPECIFIED = 0,
     AA_DIRECTION_OUTPUT = 0,
     AA_DIRECTION_INPUT = 1,
     AA_FORMAT_PCM_FLOAT = 2,
@@ -77,11 +90,13 @@ enum {
     AA_STATE_FLUSHED = 8,
     AA_STATE_STOPPED = 10,
     AA_STATE_DISCONNECTED = 13,
+    AA_ERROR_DISCONNECTED = -899,
 };
 
 static struct {
     aaudio_result_t (*createStreamBuilder)(AAudioStreamBuilder **);
     void (*setDirection)(AAudioStreamBuilder *, int32_t);
+    void (*setDeviceId)(AAudioStreamBuilder *, int32_t);
     void (*setSampleRate)(AAudioStreamBuilder *, int32_t);
     void (*setChannelCount)(AAudioStreamBuilder *, int32_t);
     void (*setFormat)(AAudioStreamBuilder *, int32_t);
@@ -98,6 +113,7 @@ static struct {
     aaudio_result_t (*requestStart)(AAudioStream *);
     aaudio_result_t (*requestPause)(AAudioStream *);
     aaudio_result_t (*requestStop)(AAudioStream *);
+    int32_t (*getDeviceId)(AAudioStream *);
     int32_t (*getSampleRate)(AAudioStream *);
     int32_t (*getFramesPerBurst)(AAudioStream *);
     int32_t (*getBufferSizeInFrames)(AAudioStream *);
@@ -125,6 +141,9 @@ typedef struct {
 #define CODEC_TRY_AGAIN -1
 #define CODEC_FORMAT_CHANGED -2
 #define CODEC_BUFFERS_CHANGED -3
+/* Song time given to a mic reading taken while nothing plays: far before
+ * any note, so it only feeds the level meter. */
+#define OFF_TIMELINE_MS (-1.0e9f)
 
 static struct {
     AMediaExtractor *(*exNew)(void);
@@ -173,6 +192,7 @@ static bool bind_libraries(void) {
 
     BIND(aa, a, createStreamBuilder, "AAudio_createStreamBuilder");
     BIND(aa, a, setDirection, "AAudioStreamBuilder_setDirection");
+    BIND(aa, a, setDeviceId, "AAudioStreamBuilder_setDeviceId");
     BIND(aa, a, setSampleRate, "AAudioStreamBuilder_setSampleRate");
     BIND(aa, a, setChannelCount, "AAudioStreamBuilder_setChannelCount");
     BIND(aa, a, setFormat, "AAudioStreamBuilder_setFormat");
@@ -189,6 +209,7 @@ static bool bind_libraries(void) {
     BIND(aa, a, requestStart, "AAudioStream_requestStart");
     BIND(aa, a, requestPause, "AAudioStream_requestPause");
     BIND(aa, a, requestStop, "AAudioStream_requestStop");
+    BIND(aa, a, getDeviceId, "AAudioStream_getDeviceId");
     BIND(aa, a, getSampleRate, "AAudioStream_getSampleRate");
     BIND(aa, a, getFramesPerBurst, "AAudioStream_getFramesPerBurst");
     BIND(aa, a, getBufferSizeInFrames, "AAudioStream_getBufferSizeInFrames");
@@ -229,9 +250,11 @@ static bool bind_libraries(void) {
 
 /* ── Engine state ────────────────────────────────────────────────────────── */
 
-enum { LAYOUT_MIXED = 0, LAYOUT_VOICE_LEFT = 1, LAYOUT_VOICE_RIGHT = 2 };
 enum { SOURCE_NONE = 0, SOURCE_MIC = 1, SOURCE_PLAYBACK = 2 };
+enum { CHANNEL_LEFT = 0, CHANNEL_RIGHT = 1 };
 
+#define MAX_SOURCES 2
+#define MAX_LANES 4
 #define RING_SIZE (1 << 16) /* mono samples, power of two */
 #define READINGS_MAX 1024
 #define READY_AFTER_MS 3000
@@ -252,35 +275,75 @@ typedef struct {
     int64_t track_frame;
 } segment_copy;
 
+/* One source file. Its configuration is set by load/2 before its decoder
+ * starts; the decoder then fills `decoded_frames` of its lanes' buffers. */
+typedef struct {
+    int lanes;               /* kept channels, 1 or 2 */
+    int channel[2];          /* CHANNEL_* of each kept channel */
+    int lane[2];             /* engine lane of each kept channel */
+    _Atomic int64_t decoded_frames;
+    _Atomic bool done;       /* the whole file is in */
+} track_source;
+
+/* Locks, always taken in this order: load_lock → lock → events_lock →
+ * readings_lock. The decoders take `lock` (to install their buffers) and
+ * `events_lock` (to send), never both and never load_lock, so load/2 may
+ * join them while holding load_lock.
+ *
+ * One process holds the engine at a time (acquire/1, release/0): `owner`,
+ * when `held`. Every NIF that plays, listens or reads the music or the
+ * microphone answers {error, not_owner} to anyone else, so a screen that
+ * lost the engine can't touch what its successor loaded. The holder only
+ * changes with load_lock, lock and events_lock all held: a check under
+ * `lock` or `events_lock` stays true while that lock is held. */
 static struct {
+    pthread_mutex_t load_lock; /* serializes load/2 */
     pthread_mutex_t lock; /* control path only — never taken by callbacks */
 
-    /* Track buffer (owned by the decoder until done; read by the output cb). */
-    int16_t *pcm; /* interleaved stereo */
-    int64_t capacity_frames;
-    _Atomic int64_t decoded_frames;
-    _Atomic bool decode_done;
-    int sample_rate;
-    _Atomic int generation; /* bumps on every load; stale decoders stop */
-    ErlNifPid owner;
+    /* Sources and lanes. Configuration fields change only in load/2, with
+     * the output stream closed; the buffers are owned by the decoders until
+     * installed and read by the output callback. */
+    int n_sources, n_lanes;
+    int guide_lane;                  /* test mode analyses it; −1: all lanes */
+    track_source src[MAX_SOURCES];
+    int lane_source[MAX_LANES];
+    int16_t *lane_pcm[MAX_LANES];    /* mono, one per lane */
+    _Atomic int installed;           /* sources whose buffers are in place */
+    _Atomic int done_sources;
+    _Atomic bool failed;             /* a source failed: the others stop */
+    /* Held to send an event, and to bump the generation: no event of an
+     * old load can reach the owner once a new load has started. */
+    pthread_mutex_t events_lock;
+    bool ready_sent;                 /* under events_lock */
+    int sample_rate;                 /* set by the first source installed */
+    _Atomic uint64_t generation;     /* bumps on every load; stale decoders stop */
+    ErlNifPid owner;                 /* under events_lock: the holder, and where events go */
+    bool held;                       /* under events_lock */
+    uint64_t epoch;                  /* under events_lock: bumps when the holder changes */
 
     /* Output. */
     AAudioStream *out;
+    int32_t out_device;          /* preferred device id; 0: system default */
     _Atomic int64_t play_frame;  /* next track frame to play */
     _Atomic int64_t seek_to;     /* −1: none */
     _Atomic bool playing;
     _Atomic bool out_dead;       /* disconnected: reopen on next play */
     _Atomic int64_t out_buffer_frames; /* how far the callback runs ahead of the speaker */
-    _Atomic float voice_gain, accomp_gain;
-    _Atomic int layout;
+    _Atomic float gain_l[MAX_LANES], gain_r[MAX_LANES];
     _Atomic uint32_t seg_seq;    /* seqlock over seg[] */
     segment seg[2];              /* [0] current, [1] previous */
     _Atomic int64_t paused_track_frame;
 
     /* Listening. */
     AAudioStream *in;
+    int32_t in_device;           /* preferred device id; 0: system default */
     _Atomic int source;
     int in_rate;
+    /* Bumps whenever listening starts or stops: mic_error events carry the
+     * number of the listening they are about, and a stream's error callback
+     * whose number has passed says nothing. */
+    _Atomic uint64_t listen_seq;
+    _Atomic bool in_failed;      /* the input stream reported an error: drop its data */
     /* Ring sample `in_base_ring` is input stream frame `in_base_frame`; the
      * mic ring is contiguous from there, so any ring index maps to an input
      * frame, and the input timestamp maps that frame to its capture time. */
@@ -300,8 +363,8 @@ static struct {
     } maps[128];
     _Atomic int64_t maps_written;
 
-    pthread_t decoder;
-    bool decoder_running;
+    pthread_t decoder[MAX_SOURCES];
+    bool decoder_running[MAX_SOURCES];
 
     pthread_t analysis;
     _Atomic bool analysis_run;
@@ -320,15 +383,40 @@ static ERL_NIF_TERM error_tuple(ErlNifEnv *env, const char *reason) {
     return enif_make_tuple2(env, atom(env, "error"), atom(env, reason));
 }
 
-static void send_event(int generation, const char *event, ERL_NIF_TERM (*payload)(ErlNifEnv *, void *),
-                       void *arg) {
+/* Caller holds events_lock. */
+static void send_event_locked(uint64_t generation, const char *event, ERL_NIF_TERM (*payload)(ErlNifEnv *, void *),
+                              void *arg) {
     if (generation != atomic_load(&E.generation)) return;
     ErlNifEnv *env = enif_alloc_env();
     ERL_NIF_TERM data = payload ? payload(env, arg) : atom(env, "nil");
-    ERL_NIF_TERM msg = enif_make_tuple3(env, atom(env, "choir_audio"), atom(env, event), data);
+    ERL_NIF_TERM msg = enif_make_tuple4(env, atom(env, "choir_audio"), atom(env, event), data,
+                                        enif_make_uint64(env, generation));
     enif_send(NULL, &E.owner, env, msg);
     enif_free_env(env);
 }
+
+static void send_event(uint64_t generation, const char *event, ERL_NIF_TERM (*payload)(ErlNifEnv *, void *),
+                       void *arg) {
+    pthread_mutex_lock(&E.events_lock);
+    send_event_locked(generation, event, payload, arg);
+    pthread_mutex_unlock(&E.events_lock);
+}
+
+/* Whether the calling process holds the engine. Caller holds events_lock. */
+static bool holder_is_caller(ErlNifEnv *env) {
+    ErlNifPid self;
+    return enif_self(env, &self) && E.held && enif_compare_pids(&E.owner, &self) == 0;
+}
+
+/* The same, taking events_lock (the caller may hold `lock`). */
+static bool is_holder(ErlNifEnv *env) {
+    pthread_mutex_lock(&E.events_lock);
+    bool yes = holder_is_caller(env);
+    pthread_mutex_unlock(&E.events_lock);
+    return yes;
+}
+
+static ERL_NIF_TERM not_owner(ErlNifEnv *env) { return error_tuple(env, "not_owner"); }
 
 static int64_t now_ns(void) {
     struct timespec ts;
@@ -336,19 +424,40 @@ static int64_t now_ns(void) {
     return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
+/* Every source's buffers are in place (and none failed): playable. */
+static bool tracks_installed(void) {
+    return E.n_sources > 0 && atomic_load(&E.installed) == E.n_sources && !atomic_load(&E.failed);
+}
+
+/* Frames playable from the start: up to the least-decoded source still
+ * decoding. A finished source is silent past its end, so once every source
+ * is in, the longest one sets the length. */
+static int64_t available_frames(void) {
+    int64_t open_min = INT64_MAX, longest = 0;
+    for (int i = 0; i < E.n_sources; i++) {
+        bool done = atomic_load(&E.src[i].done);
+        int64_t decoded = atomic_load(&E.src[i].decoded_frames);
+        if (decoded > longest) longest = decoded;
+        if (!done && decoded < open_min) open_min = decoded;
+    }
+    return open_min == INT64_MAX ? longest : open_min;
+}
+
 /* ── Decoder ─────────────────────────────────────────────────────────────── */
 
 typedef struct {
     char *path;
-    int generation;
+    uint64_t generation;
+    int index; /* into E.src */
 } decode_job;
 
 static ERL_NIF_TERM info_payload(ErlNifEnv *env, void *unused) {
     (void)unused;
     ERL_NIF_TERM keys[3] = {atom(env, "duration_ms"), atom(env, "sample_rate"), atom(env, "complete")};
-    double ms = 1000.0 * (double)atomic_load(&E.decoded_frames) / (E.sample_rate ? E.sample_rate : 1);
+    double ms = 1000.0 * (double)available_frames() / (E.sample_rate ? E.sample_rate : 1);
+    bool complete = atomic_load(&E.done_sources) == E.n_sources;
     ERL_NIF_TERM vals[3] = {enif_make_double(env, ms), enif_make_int(env, E.sample_rate),
-                            atom(env, atomic_load(&E.decode_done) ? "true" : "false")};
+                            atom(env, complete ? "true" : "false")};
     ERL_NIF_TERM map;
     enif_make_map_from_arrays(env, keys, vals, 3, &map);
     return map;
@@ -356,7 +465,39 @@ static ERL_NIF_TERM info_payload(ErlNifEnv *env, void *unused) {
 
 static ERL_NIF_TERM reason_payload(ErlNifEnv *env, void *reason) { return atom(env, (const char *)reason); }
 
-static const char *decode_into_buffer(decode_job *job) {
+static bool job_live(const decode_job *job) {
+    return job->generation == atomic_load(&E.generation) && !atomic_load(&E.failed);
+}
+
+/* `ready` once every source has its first seconds in (or is complete), then
+ * `decoded` (when `decoded` is set) after it, whichever decoder gets here. */
+static void announce(uint64_t generation, bool decoded) {
+    pthread_mutex_lock(&E.events_lock);
+    if (generation != atomic_load(&E.generation)) { /* a stale decoder: not its ready_sent */
+        pthread_mutex_unlock(&E.events_lock);
+        return;
+    }
+    bool ready = tracks_installed();
+    int64_t need = (int64_t)E.sample_rate * READY_AFTER_MS / 1000;
+    for (int i = 0; ready && i < E.n_sources; i++)
+        if (!atomic_load(&E.src[i].done) && atomic_load(&E.src[i].decoded_frames) < need) ready = false;
+    if (ready && !E.ready_sent) {
+        E.ready_sent = true;
+        send_event_locked(generation, "ready", info_payload, NULL);
+    }
+    if (decoded) send_event_locked(generation, "decoded", info_payload, NULL);
+    pthread_mutex_unlock(&E.events_lock);
+}
+
+static void free_buffers(int16_t *bufs[2]) {
+    for (int k = 0; k < 2; k++) {
+        free(bufs[k]);
+        bufs[k] = NULL;
+    }
+}
+
+static const char *decode_source(decode_job *job) {
+    track_source *src = &E.src[job->index];
     int fd = open(job->path, O_RDONLY);
     if (fd < 0) return "not_found";
     struct stat st;
@@ -398,36 +539,46 @@ static const char *decode_into_buffer(decode_job *job) {
     /* Room for the stated duration plus slack; the decoder may report a
      * little more audio than the container's duration. */
     int64_t capacity = (int64_t)((double)duration_us * rate / 1e6) + rate * 2;
-    int16_t *pcm = calloc((size_t)capacity * 2, sizeof(int16_t));
-    if (!pcm) {
-        md.codecDelete(codec);
-        md.exDelete(ex);
-        close(fd);
-        return "alloc";
+    int16_t *bufs[2] = {NULL, NULL};
+    for (int k = 0; k < src->lanes; k++) {
+        bufs[k] = calloc((size_t)capacity, sizeof(int16_t));
+        if (!bufs[k]) {
+            free_buffers(bufs);
+            md.codecDelete(codec);
+            md.exDelete(ex);
+            close(fd);
+            return "alloc";
+        }
     }
 
+    /* Install the buffers. Every source must share the first one's rate:
+     * they play frame for frame. */
+    bool stale = false;
+    const char *mismatch = NULL;
     pthread_mutex_lock(&E.lock);
-    if (job->generation != atomic_load(&E.generation)) {
-        pthread_mutex_unlock(&E.lock);
-        free(pcm);
+    if (!job_live(job)) stale = true;
+    else if (E.sample_rate && E.sample_rate != rate) mismatch = "mismatched_sources";
+    else {
+        E.sample_rate = rate;
+        for (int k = 0; k < src->lanes; k++) E.lane_pcm[src->lane[k]] = bufs[k];
+        atomic_store(&src->decoded_frames, 0);
+        atomic_fetch_add(&E.installed, 1);
+    }
+    pthread_mutex_unlock(&E.lock);
+    if (stale || mismatch) {
+        free_buffers(bufs);
         md.codecDelete(codec);
         md.exDelete(ex);
         close(fd);
-        return NULL;
+        return mismatch;
     }
-    E.pcm = pcm;
-    E.capacity_frames = capacity;
-    E.sample_rate = rate;
-    atomic_store(&E.decoded_frames, 0);
-    pthread_mutex_unlock(&E.lock);
 
     md.codecStart(codec);
-    bool input_done = false, ready_sent = false;
+    bool input_done = false;
     int out_channels = channels;
     int64_t written = 0;
-    const char *failure = NULL;
 
-    while (job->generation == atomic_load(&E.generation)) {
+    while (job_live(job)) {
         if (!input_done) {
             ssize_t in = md.codecDequeueInputBuffer(codec, 5000);
             if (in >= 0) {
@@ -457,23 +608,21 @@ static const char *decode_into_buffer(decode_job *job) {
         size_t size = 0;
         uint8_t *buf = md.codecGetOutputBuffer(codec, (size_t)out, &size);
         const int16_t *samples = (const int16_t *)(buf + info.offset);
-        int64_t frames = info.size / (int64_t)(sizeof(int16_t) * (out_channels > 0 ? out_channels : 1));
+        int stride = out_channels > 0 ? out_channels : 1;
+        int64_t frames = info.size / (int64_t)(sizeof(int16_t) * stride);
         if (written + frames > capacity) frames = capacity - written;
-        for (int64_t f = 0; f < frames; f++) {
-            int16_t l = samples[f * out_channels];
-            int16_t r = out_channels > 1 ? samples[f * out_channels + 1] : l;
-            pcm[(written + f) * 2] = l;
-            pcm[(written + f) * 2 + 1] = r;
+        /* A mono file feeds both a left and a right lane. */
+        for (int k = 0; k < src->lanes; k++) {
+            int offset = src->channel[k] == CHANNEL_RIGHT && stride > 1 ? 1 : 0;
+            int16_t *dst = bufs[k] + written;
+            for (int64_t f = 0; f < frames; f++) dst[f] = samples[f * stride + offset];
         }
         written += frames;
-        atomic_store(&E.decoded_frames, written);
+        atomic_store(&src->decoded_frames, written);
         bool eos = (info.flags & CODEC_EOS) != 0;
         md.codecReleaseOutputBuffer(codec, (size_t)out, false);
 
-        if (!ready_sent && written >= (int64_t)rate * READY_AFTER_MS / 1000) {
-            ready_sent = true;
-            send_event(job->generation, "ready", info_payload, NULL);
-        }
+        announce(job->generation, false);
         if (eos || written >= capacity) break;
     }
 
@@ -482,19 +631,20 @@ static const char *decode_into_buffer(decode_job *job) {
     md.exDelete(ex);
     close(fd);
 
-    if (job->generation == atomic_load(&E.generation)) {
-        atomic_store(&E.decode_done, true);
-        if (!ready_sent) send_event(job->generation, "ready", info_payload, NULL);
-        send_event(job->generation, "decoded", info_payload, NULL);
-        LOGI("decoded %lld frames at %d Hz", (long long)written, rate);
+    if (job_live(job)) {
+        atomic_store(&src->done, true);
+        LOGI("source %d: decoded %lld frames at %d Hz", job->index, (long long)written, rate);
+        bool last = atomic_fetch_add(&E.done_sources, 1) + 1 == E.n_sources;
+        announce(job->generation, last);
     }
-    return failure;
+    return NULL;
 }
 
 static void *decoder_main(void *arg) {
     decode_job *job = arg;
-    const char *failure = decode_into_buffer(job);
-    if (failure) send_event(job->generation, "load_error", reason_payload, (void *)failure);
+    const char *failure = decode_source(job);
+    if (failure && !atomic_exchange(&E.failed, true))
+        send_event(job->generation, "load_error", reason_payload, (void *)failure);
     free(job->path);
     free(job);
     return NULL;
@@ -536,12 +686,11 @@ static bool stream_quiet(int32_t state) {
            state == AA_STATE_STOPPED || state == AA_STATE_DISCONNECTED;
 }
 
-/* Stop a stream, wait until no callback can run, then close it. Driven by
- * the stream's state, not one call's result: a stream still PAUSING (a
- * pause just before a track switch) refuses requestStop but reaches PAUSED
- * by itself. Returns false if it was still running after a second (closed
- * anyway): the caller must then not free what the callback reads. */
-static bool stop_and_close(AAudioStream *s) {
+/* Stop a stream and wait until no callback can run. Driven by the stream's
+ * state, not one call's result: a stream still PAUSING (a pause just before
+ * a track switch) refuses requestStop but reaches PAUSED by itself. False if
+ * it was still running after a second. */
+static bool stop_stream(AAudioStream *s) {
     int64_t deadline = now_ns() + 1000000000LL;
     int32_t state = aa.getState(s);
     while (!stream_quiet(state) && now_ns() < deadline) {
@@ -550,10 +699,23 @@ static bool stop_and_close(AAudioStream *s) {
         aa.waitForStateChange(s, state, &next, 100000000LL); /* times out or moves on */
         state = aa.getState(s);
     }
-    bool quiet = stream_quiet(state);
-    if (!quiet) LOGE("stream still running (state %d) at close", state);
-    aa.close(s);
-    return quiet;
+    if (!stream_quiet(state)) {
+        LOGE("stream still running (state %d): left open", state);
+        return false;
+    }
+    return true;
+}
+
+/* Stop and close `*s`, then clear it. A stream that won't stop is never
+ * closed (closing under a running callback isn't safe) and stays in `*s`;
+ * then false, and the caller must leave alone everything its callback
+ * reads. */
+static bool stop_and_close(AAudioStream **s) {
+    if (!*s) return true;
+    if (!stop_stream(*s)) return false;
+    aa.close(*s);
+    *s = NULL;
+    return true;
 }
 
 static void ring_push(const float *x, int n) {
@@ -561,6 +723,19 @@ static void ring_push(const float *x, int n) {
     for (int i = 0; i < n; i++) E.ring[(w + i) & (RING_SIZE - 1)] = x[i];
     atomic_store_explicit(&E.ring_written, w + n, memory_order_release);
 }
+
+/* Test mode: `n` samples of the analysed lane starting at track frame
+ * `track_frame`, with the map entry that places them on the song. */
+static void push_playback(const float *x, int n, int64_t track_frame) {
+    if (n == 0) return;
+    int64_t m = atomic_load_explicit(&E.maps_written, memory_order_relaxed);
+    E.maps[m & 127].ring_index = atomic_load_explicit(&E.ring_written, memory_order_relaxed);
+    E.maps[m & 127].track_frame = track_frame;
+    atomic_store_explicit(&E.maps_written, m + 1, memory_order_release);
+    ring_push(x, n);
+}
+
+static float clamp_sample(float x) { return x > 1.0f ? 1.0f : x < -1.0f ? -1.0f : x; }
 
 static int32_t output_cb(AAudioStream *s, void *user, void *data, int32_t frames) {
     (void)user;
@@ -573,46 +748,56 @@ static int32_t output_cb(AAudioStream *s, void *user, void *data, int32_t frames
         frame = seek;
         write_segment(stream_frame, frame);
     }
-
-    int64_t avail = atomic_load(&E.decoded_frames);
-    float vg = atomic_load(&E.voice_gain), ag = atomic_load(&E.accomp_gain);
-    int layout = atomic_load(&E.layout);
-    bool listen_playback = atomic_load(&E.source) == SOURCE_PLAYBACK;
+    /* Test mode's analysed samples, pushed a chunk at a time: callbacks may
+     * be any size. Frames only stop advancing at the end of what's decoded,
+     * so a chunk's samples are consecutive frames from its first one. */
     float mono[1024];
     int mono_n = 0;
+    int64_t mono_frame = frame;
+
+    bool loaded = tracks_installed();
+    int lanes = loaded ? E.n_lanes : 0;
+    int64_t avail = loaded ? available_frames() : 0;
+    const int16_t *pcm[MAX_LANES];
+    int64_t lane_end[MAX_LANES];
+    float gl[MAX_LANES], gr[MAX_LANES];
+    for (int k = 0; k < lanes; k++) {
+        pcm[k] = E.lane_pcm[k];
+        lane_end[k] = atomic_load(&E.src[E.lane_source[k]].decoded_frames);
+        gl[k] = atomic_load(&E.gain_l[k]);
+        gr[k] = atomic_load(&E.gain_r[k]);
+    }
+    int guide = E.guide_lane;
+    bool listen_playback = atomic_load(&E.source) == SOURCE_PLAYBACK;
 
     for (int32_t i = 0; i < frames; i++) {
         float l = 0.0f, r = 0.0f;
-        if (E.pcm && frame < avail) {
-            float a = E.pcm[frame * 2] / 32768.0f, b = E.pcm[frame * 2 + 1] / 32768.0f;
-            float mix;
-            switch (layout) {
-            case LAYOUT_VOICE_LEFT: mix = a * vg + b * ag; break;
-            case LAYOUT_VOICE_RIGHT: mix = b * vg + a * ag; break;
-            default: l = a * ag; r = b * ag; mix = -1.0f; break;
+        if (frame < avail) {
+            float sum = 0.0f, guide_x = 0.0f;
+            for (int k = 0; k < lanes; k++) {
+                float x = frame < lane_end[k] ? pcm[k][frame] / 32768.0f : 0.0f;
+                l += x * gl[k];
+                r += x * gr[k];
+                sum += x;
+                if (k == guide) guide_x = x;
             }
-            if (mix != -1.0f) l = r = mix;
-            /* Test mode hears what the singer should match: the part's voice
-             * channel (the whole mix for a mixed track), not the band. */
-            if (listen_playback && mono_n < 1024)
-                mono[mono_n++] = layout == LAYOUT_VOICE_LEFT    ? a
-                                 : layout == LAYOUT_VOICE_RIGHT ? b
-                                                                : 0.5f * (a + b);
+            /* Test mode hears what the singer should match: the guide lane
+             * (the part), or every lane when there is none. */
+            if (listen_playback) mono[mono_n++] = guide >= 0 ? guide_x : sum / (float)lanes;
             frame++;
-        } else if (listen_playback && mono_n < 1024) {
+        } else if (listen_playback) {
             mono[mono_n++] = 0.0f;
         }
-        out[i * 2] = l;
-        out[i * 2 + 1] = r;
+        if (mono_n == 1024) {
+            push_playback(mono, mono_n, mono_frame);
+            mono_n = 0;
+            mono_frame = frame;
+        }
+        out[i * 2] = clamp_sample(l);
+        out[i * 2 + 1] = clamp_sample(r);
     }
 
-    if (listen_playback) {
-        int64_t m = atomic_load_explicit(&E.maps_written, memory_order_relaxed);
-        E.maps[m & 127].ring_index = atomic_load_explicit(&E.ring_written, memory_order_relaxed);
-        E.maps[m & 127].track_frame = frame - mono_n;
-        atomic_store_explicit(&E.maps_written, m + 1, memory_order_release);
-        ring_push(mono, mono_n);
-    }
+    if (listen_playback) push_playback(mono, mono_n, mono_frame);
     atomic_store(&E.play_frame, frame);
     return AA_CALLBACK_CONTINUE;
 }
@@ -631,11 +816,12 @@ static void output_error_cb(AAudioStream *s, void *user, aaudio_result_t err) {
     atomic_store(&E.playing, false);
 }
 
-static aaudio_result_t open_output(void) {
+static aaudio_result_t open_output_on(int32_t device) {
     AAudioStreamBuilder *b;
     aaudio_result_t r = aa.createStreamBuilder(&b);
     if (r != AA_OK) return r;
     aa.setDirection(b, AA_DIRECTION_OUTPUT);
+    if (device > 0) aa.setDeviceId(b, device);
     aa.setSampleRate(b, E.sample_rate);
     aa.setChannelCount(b, 2);
     aa.setFormat(b, AA_FORMAT_PCM_FLOAT);
@@ -645,26 +831,55 @@ static aaudio_result_t open_output(void) {
     aa.setContentType(b, AA_CONTENT_MUSIC);
     aa.setDataCallback(b, output_cb, NULL);
     aa.setErrorCallback(b, output_error_cb, NULL);
-    r = aa.openStream(b, &E.out);
+    AAudioStream *s = NULL;
+    r = aa.openStream(b, &s);
     aa.builderDelete(b);
     if (r == AA_OK) {
+        E.out = s;
         atomic_store(&E.out_dead, false);
-        atomic_store(&E.out_buffer_frames, aa.getBufferSizeInFrames(E.out));
-        LOGI("output open: %d Hz, burst %d, buffer %d", aa.getSampleRate(E.out), aa.getFramesPerBurst(E.out),
-             aa.getBufferSizeInFrames(E.out));
+        atomic_store(&E.out_buffer_frames, aa.getBufferSizeInFrames(s));
+        LOGI("output open: device %d, %d Hz, burst %d, buffer %d", aa.getDeviceId(s), aa.getSampleRate(s),
+             aa.getFramesPerBurst(s), aa.getBufferSizeInFrames(s));
     }
     return r;
 }
 
-/* Returns false if the callback may still be running (see stop_and_close). */
-static bool close_output(void) {
-    bool quiet = true;
-    if (E.out) {
-        quiet = stop_and_close(E.out);
-        E.out = NULL;
+/* On the preferred device, else (gone, refused) on the system default. */
+static aaudio_result_t open_output(void) {
+    aaudio_result_t r = open_output_on(E.out_device);
+    if (r != AA_OK && E.out_device > 0) {
+        LOGE("output device %d unavailable (%d): using the default", E.out_device, r);
+        r = open_output_on(AA_UNSPECIFIED);
     }
+    return r;
+}
+
+static double heard_track_frame(int64_t t_ns, bool settled);
+
+/* Stop and close the output stream, keeping the position being heard as
+ * the paused one. False if it wouldn't stop: it stays open in E.out (see
+ * stop_and_close), asked to stop. */
+static bool close_output(void) {
+    if (E.out && atomic_load(&E.playing)) {
+        double heard = heard_track_frame(now_ns(), true);
+        if (heard >= 0) atomic_store(&E.paused_track_frame, (int64_t)heard);
+    }
+    bool closed = stop_and_close(&E.out);
     atomic_store(&E.playing, false);
-    return quiet;
+    return closed;
+}
+
+/* Play from track frame `frame` on the open output stream. */
+static aaudio_result_t start_at(int64_t frame) {
+    atomic_store(&E.play_frame, frame);
+    atomic_store(&E.seek_to, frame);
+    atomic_store(&E.paused_track_frame, frame);
+    /* Already running (a restart or seek while playing): the callback picks
+     * up seek_to; AAudio refuses requestStart on a started stream, and taking
+     * that refusal as "stopped" would leave the stream playing unpausable. */
+    aaudio_result_t r = atomic_load(&E.playing) ? AA_OK : aa.requestStart(E.out);
+    atomic_store(&E.playing, r == AA_OK);
+    return r;
 }
 
 /* Track frame being heard at monotonic time `t_ns`, or −1 when unknown.
@@ -695,11 +910,50 @@ static double heard_track_frame(int64_t t_ns, bool settled) {
     return track < 0 ? 0 : track;
 }
 
+/* Reopen the output stream (on a newly preferred device) at the position
+ * being heard, playing again if it was. */
+static void reopen_output_locked(void) {
+    bool was_playing = atomic_load(&E.playing);
+    if (!close_output()) return;
+    int64_t at = atomic_load(&E.paused_track_frame);
+    atomic_store(&E.seek_to, -1);
+    atomic_store(&E.play_frame, at);
+    aaudio_result_t r = open_output();
+    if (r != AA_OK) {
+        LOGE("output reopen failed: %d", r); /* the next play tries again */
+        return;
+    }
+    if (was_playing && start_at(at) != AA_OK) LOGE("output restart failed");
+}
+
 /* ── Input and analysis ──────────────────────────────────────────────────── */
+
+/* The microphone stream failed (unplugged headset, Bluetooth gone, the
+ * system took the input). AAudio forbids closing a stream here: just drop
+ * its data and tell the holder, who stops or restarts listening. `user` is
+ * the listening's number (listen_seq when the stream opened). */
+static void input_error_cb(AAudioStream *s, void *user, aaudio_result_t err) {
+    (void)s;
+    LOGE("input stream error %d", err);
+    uintptr_t seq = (uintptr_t)user;
+    if (seq != (uintptr_t)atomic_load(&E.listen_seq)) return;
+    atomic_store(&E.in_failed, true);
+    pthread_mutex_lock(&E.events_lock);
+    uint64_t now = atomic_load(&E.listen_seq);
+    if (E.held && seq == (uintptr_t)now) {
+        ErlNifEnv *env = enif_alloc_env();
+        const char *reason = err == AA_ERROR_DISCONNECTED ? "disconnected" : "input_error";
+        ERL_NIF_TERM msg = enif_make_tuple4(env, atom(env, "choir_audio"), atom(env, "mic_error"), atom(env, reason),
+                                            enif_make_uint64(env, now));
+        enif_send(NULL, &E.owner, env, msg);
+        enif_free_env(env);
+    }
+    pthread_mutex_unlock(&E.events_lock);
+}
 
 static int32_t input_cb(AAudioStream *s, void *user, void *data, int32_t frames) {
     (void)user;
-    if (atomic_load(&E.source) != SOURCE_MIC) return AA_CALLBACK_CONTINUE;
+    if (atomic_load(&E.source) != SOURCE_MIC || atomic_load(&E.in_failed)) return AA_CALLBACK_CONTINUE;
     if (atomic_load(&E.in_base_ring) < 0) {
         atomic_store(&E.in_base_frame, aa.getFramesRead(s));
         atomic_store(&E.in_base_ring, atomic_load(&E.ring_written));
@@ -777,12 +1031,18 @@ static void *analysis_main(void *arg) {
              * trylock: load/play may be closing the output stream, and
              * listen() joins this thread while holding the lock. */
             int64_t t = capture_time(read - half_window, written, rate);
-            if (!atomic_load(&E.playing) || pthread_mutex_trylock(&E.lock) != 0) continue;
-            song_frame = heard_track_frame(t, false);
-            pthread_mutex_unlock(&E.lock);
-            if (song_frame < 0) continue;
+            song_frame = -1;
+            if (atomic_load(&E.playing) && pthread_mutex_trylock(&E.lock) == 0) {
+                song_frame = heard_track_frame(t, false);
+                pthread_mutex_unlock(&E.lock);
+            }
         }
-        reading r = {(float)(1000.0 * song_frame / E.sample_rate), pr.hz, pr.confidence, pr.rms_db};
+        /* Nothing playing (or no timeline yet): still report the reading,
+         * for the Audio screen's mic meter, far before any song time, where
+         * the practice screen finds no note. */
+        float song_ms = song_frame < 0 || E.sample_rate == 0 ? OFF_TIMELINE_MS
+                                                             : (float)(1000.0 * song_frame / E.sample_rate);
+        reading r = {song_ms, pr.hz, pr.confidence, pr.rms_db};
         push_reading(r);
     }
     free(chunk);
@@ -790,11 +1050,12 @@ static void *analysis_main(void *arg) {
     return NULL;
 }
 
-static aaudio_result_t open_input(void) {
+static aaudio_result_t open_input_on(int32_t device) {
     AAudioStreamBuilder *b;
     aaudio_result_t r = aa.createStreamBuilder(&b);
     if (r != AA_OK) return r;
     aa.setDirection(b, AA_DIRECTION_INPUT);
+    if (device > 0) aa.setDeviceId(b, device);
     aa.setSampleRate(b, 48000);
     aa.setChannelCount(b, 1);
     aa.setFormat(b, AA_FORMAT_PCM_FLOAT);
@@ -802,22 +1063,234 @@ static aaudio_result_t open_input(void) {
     aa.setPerformanceMode(b, AA_PERF_LOW_LATENCY);
     aa.setInputPreset(b, AA_PRESET_VOICE_RECOGNITION);
     aa.setDataCallback(b, input_cb, NULL);
-    r = aa.openStream(b, &E.in);
+    aa.setErrorCallback(b, input_error_cb, (void *)(uintptr_t)atomic_load(&E.listen_seq));
+    AAudioStream *s = NULL;
+    r = aa.openStream(b, &s);
     aa.builderDelete(b);
     if (r == AA_OK) {
-        E.in_rate = aa.getSampleRate(E.in);
-        LOGI("input open: %d Hz, burst %d", E.in_rate, aa.getFramesPerBurst(E.in));
+        E.in = s;
+        E.in_rate = aa.getSampleRate(s);
+        LOGI("input open: device %d, %d Hz, burst %d", aa.getDeviceId(s), E.in_rate, aa.getFramesPerBurst(s));
     }
     return r;
 }
 
-static void stop_listening_locked(void) {
-    if (atomic_exchange(&E.analysis_run, false)) pthread_join(E.analysis, NULL);
-    if (E.in) {
-        stop_and_close(E.in);
-        E.in = NULL;
+static aaudio_result_t open_input(void) {
+    aaudio_result_t r = open_input_on(E.in_device);
+    if (r != AA_OK && E.in_device > 0) {
+        LOGE("input device %d unavailable (%d): using the default", E.in_device, r);
+        r = open_input_on(AA_UNSPECIFIED);
     }
+    return r;
+}
+
+/* Stop analysis and the microphone. The input callback does nothing once
+ * the source is no longer the mic, so a mic stream that won't stop is left
+ * open (see stop_and_close) and harmless; false then. */
+static bool stop_listening_locked(void) {
+    atomic_fetch_add(&E.listen_seq, 1); /* a late error from this stream says nothing */
+    if (atomic_exchange(&E.analysis_run, false)) pthread_join(E.analysis, NULL);
     atomic_store(&E.source, SOURCE_NONE);
+    return stop_and_close(&E.in);
+}
+
+/* Start detection on `source` (nothing must be listening). NULL or a reason;
+ * the listening's number is then listen_seq. */
+static const char *start_listening_locked(int source) {
+    if (source == SOURCE_PLAYBACK && !tracks_installed()) return "not_loaded";
+    atomic_fetch_add(&E.listen_seq, 1);
+    atomic_store(&E.in_failed, false);
+    if (source == SOURCE_MIC) {
+        if (E.in) return "microphone_unavailable"; /* the last one wouldn't stop */
+        aaudio_result_t r = open_input();
+        if (r != AA_OK) {
+            LOGE("input open failed: %d", r);
+            return "microphone_unavailable";
+        }
+    }
+    atomic_store(&E.maps_written, 0);
+    atomic_store(&E.in_base_ring, -1);
+    atomic_store(&E.source, source);
+    pthread_mutex_lock(&E.readings_lock);
+    E.readings_count = 0;
+    pthread_mutex_unlock(&E.readings_lock);
+    atomic_store(&E.analysis_run, true);
+    if (pthread_create(&E.analysis, NULL, analysis_main, NULL) != 0) {
+        atomic_store(&E.analysis_run, false);
+        stop_listening_locked();
+        return "thread";
+    }
+    if (E.in && aa.requestStart(E.in) != AA_OK) {
+        LOGE("input start failed");
+        stop_listening_locked();
+        return "microphone_unavailable";
+    }
+    return NULL;
+}
+
+/* ── Devices (Java AudioManager through JNI) ─────────────────────────────── */
+
+/* The calling thread's JNIEnv, attaching it if needed (dirty schedulers are
+ * native threads the JVM doesn't know); `*attached` says to detach after. */
+static JNIEnv *jni_env(bool *attached) {
+    *attached = false;
+    if (!g_jvm) return NULL;
+    JNIEnv *jenv = NULL;
+    jint rc = (*g_jvm)->GetEnv(g_jvm, (void **)&jenv, JNI_VERSION_1_6);
+    if (rc == JNI_OK) return jenv;
+    if (rc != JNI_EDETACHED || (*g_jvm)->AttachCurrentThread(g_jvm, &jenv, NULL) != JNI_OK) return NULL;
+    *attached = true;
+    return jenv;
+}
+
+static bool jni_failed(JNIEnv *j) {
+    if (!(*j)->ExceptionCheck(j)) return false;
+    (*j)->ExceptionClear(j);
+    return true;
+}
+
+/* A method id, or NULL (exception cleared) if the class lacks it. */
+static jmethodID method(JNIEnv *j, jclass cls, const char *name, const char *sig) {
+    jmethodID id = cls ? (*j)->GetMethodID(j, cls, name, sig) : NULL;
+    return jni_failed(j) ? NULL : id;
+}
+
+/* A Java string (or NULL) as a UTF-8 binary. Not GetStringUTFChars: that
+ * is modified UTF-8, which turns an emoji in a headphone name into bytes
+ * that aren't valid UTF-8. */
+static ERL_NIF_TERM string_term(ErlNifEnv *env, JNIEnv *j, jstring s) {
+    ERL_NIF_TERM term;
+    jsize n = s ? (*j)->GetStringLength(j, s) : 0;
+    const jchar *u = n > 0 ? (*j)->GetStringChars(j, s, NULL) : NULL;
+    ErlNifBinary bin;
+    if (!u || !enif_alloc_binary((size_t)n * 3, &bin)) { /* ≤ 3 bytes per UTF-16 unit */
+        if (u) (*j)->ReleaseStringChars(j, s, u);
+        enif_make_new_binary(env, 0, &term);
+        return term;
+    }
+    size_t w = 0;
+    for (jsize i = 0; i < n; i++) {
+        uint32_t c = u[i];
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < n && u[i + 1] >= 0xDC00 && u[i + 1] < 0xE000)
+            c = 0x10000 + ((c - 0xD800) << 10) + (u[++i] - 0xDC00u);
+        else if (c >= 0xD800 && c < 0xE000)
+            c = 0xFFFD; /* a lone surrogate */
+        if (c < 0x80) {
+            bin.data[w++] = (unsigned char)c;
+        } else if (c < 0x800) {
+            bin.data[w++] = (unsigned char)(0xC0 | (c >> 6));
+            bin.data[w++] = (unsigned char)(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            bin.data[w++] = (unsigned char)(0xE0 | (c >> 12));
+            bin.data[w++] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+            bin.data[w++] = (unsigned char)(0x80 | (c & 0x3F));
+        } else {
+            bin.data[w++] = (unsigned char)(0xF0 | (c >> 18));
+            bin.data[w++] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
+            bin.data[w++] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+            bin.data[w++] = (unsigned char)(0x80 | (c & 0x3F));
+        }
+    }
+    (*j)->ReleaseStringChars(j, s, u);
+    enif_realloc_binary(&bin, w);
+    return enif_make_binary(env, &bin);
+}
+
+/* AudioDeviceInfo.TYPE_* → kind atom; NULL for the system's internal
+ * routes (telephony, remote submix, echo reference, …), which aren't
+ * anything a singer can pick. A Bluetooth headset's microphone is
+ * `bluetooth_sco` whichever profile carries it (classic SCO or LE audio);
+ * as an output, LE audio is `bluetooth` like A2DP, SCO stays `bluetooth_sco`
+ * (call quality). */
+static const char *device_kind(jint type, bool input) {
+    switch (type) {
+    case 1: return "earpiece";                /* BUILTIN_EARPIECE */
+    case 2: return "speaker";                 /* BUILTIN_SPEAKER */
+    case 3: return "wired_headset";           /* WIRED_HEADSET */
+    case 4: return "wired_headphones";        /* WIRED_HEADPHONES */
+    case 7: return "bluetooth_sco";           /* BLUETOOTH_SCO */
+    case 8: return "bluetooth";               /* BLUETOOTH_A2DP */
+    case 11: case 12: case 22: return "usb";  /* USB_DEVICE, USB_ACCESSORY, USB_HEADSET */
+    case 15: return "builtin_mic";            /* BUILTIN_MIC */
+    case 26: return input ? "bluetooth_sco" : "bluetooth"; /* BLE_HEADSET */
+    case 23: case 27: case 30:                /* HEARING_AID, BLE_SPEAKER, BLE_BROADCAST */
+        return "bluetooth";
+    case 16: case 17: case 18: case 24: case 25: case 28:
+        /* FM_TUNER, TV_TUNER, TELEPHONY, BUILTIN_SPEAKER_SAFE, REMOTE_SUBMIX, ECHO_REFERENCE */
+        return NULL;
+    default: return "other";
+    }
+}
+
+typedef struct {
+    jmethodID get_devices, get_id, get_type, get_name, to_string;
+} device_methods;
+
+/* One AudioDeviceInfo as a device map; false to leave it out. */
+static bool device_term(ErlNifEnv *env, JNIEnv *j, jobject d, const device_methods *m, const char *direction,
+                        ERL_NIF_TERM *out) {
+    jint type = (*j)->CallIntMethod(j, d, m->get_type);
+    const char *kind = jni_failed(j) ? NULL : device_kind(type, strcmp(direction, "input") == 0);
+    if (!kind) return false;
+    jint id = (*j)->CallIntMethod(j, d, m->get_id);
+    if (jni_failed(j)) return false;
+    jobject chars = (*j)->CallObjectMethod(j, d, m->get_name);
+    if (jni_failed(j)) chars = NULL;
+    jstring name = chars ? (jstring)(*j)->CallObjectMethod(j, chars, m->to_string) : NULL;
+    if (jni_failed(j)) name = NULL;
+    ERL_NIF_TERM name_term = string_term(env, j, name);
+    if (name) (*j)->DeleteLocalRef(j, name);
+    if (chars) (*j)->DeleteLocalRef(j, chars);
+
+    ERL_NIF_TERM keys[4] = {atom(env, "id"), atom(env, "direction"), atom(env, "kind"), atom(env, "name")};
+    ERL_NIF_TERM vals[4] = {enif_make_int(env, id), atom(env, direction), atom(env, kind), name_term};
+    enif_make_map_from_arrays(env, keys, vals, 4, out);
+    return true;
+}
+
+/* Prepend the devices AudioManager lists for `flag` (GET_DEVICES_OUTPUTS 2,
+ * GET_DEVICES_INPUTS 1) to `list`, last first, so the list keeps its order. */
+static ERL_NIF_TERM add_devices(ErlNifEnv *env, JNIEnv *j, jobject manager, const device_methods *m, jint flag,
+                                const char *direction, ERL_NIF_TERM list) {
+    jobjectArray devices = (jobjectArray)(*j)->CallObjectMethod(j, manager, m->get_devices, flag);
+    if (jni_failed(j) || !devices) return list;
+    for (jsize i = (*j)->GetArrayLength(j, devices) - 1; i >= 0; i--) {
+        jobject d = (*j)->GetObjectArrayElement(j, devices, i);
+        if (jni_failed(j) || !d) continue;
+        ERL_NIF_TERM device;
+        if (device_term(env, j, d, m, direction, &device)) list = enif_make_list_cell(env, device, list);
+        (*j)->DeleteLocalRef(j, d);
+    }
+    (*j)->DeleteLocalRef(j, devices);
+    return list;
+}
+
+/* Connected audio devices: outputs, then inputs. [] if Java can't be reached. */
+static ERL_NIF_TERM device_list(ErlNifEnv *env, JNIEnv *j) {
+    ERL_NIF_TERM list = enif_make_list(env, 0);
+    if (!g_activity) return list;
+
+    jmethodID get_service = method(j, (*j)->GetObjectClass(j, g_activity), "getSystemService",
+                                   "(Ljava/lang/String;)Ljava/lang/Object;");
+    if (!get_service) return list;
+    jobject manager = (*j)->CallObjectMethod(j, g_activity, get_service, (*j)->NewStringUTF(j, "audio"));
+    if (jni_failed(j) || !manager) return list;
+
+    jclass info_class = (*j)->FindClass(j, "android/media/AudioDeviceInfo");
+    if (jni_failed(j)) return list;
+    jclass object_class = (*j)->FindClass(j, "java/lang/Object");
+    if (jni_failed(j)) return list;
+    device_methods m = {
+        method(j, (*j)->GetObjectClass(j, manager), "getDevices", "(I)[Landroid/media/AudioDeviceInfo;"),
+        method(j, info_class, "getId", "()I"),
+        method(j, info_class, "getType", "()I"),
+        method(j, info_class, "getProductName", "()Ljava/lang/CharSequence;"),
+        method(j, object_class, "toString", "()Ljava/lang/String;"),
+    };
+    if (!m.get_devices || !m.get_id || !m.get_type || !m.get_name || !m.to_string) return list;
+
+    list = add_devices(env, j, manager, &m, 1, "input", list);
+    return add_devices(env, j, manager, &m, 2, "output", list);
 }
 
 /* ── NIFs ────────────────────────────────────────────────────────────────── */
@@ -825,53 +1298,235 @@ static void stop_listening_locked(void) {
 #define REQUIRE_LIBS(env) \
     if (!libs_ok) return enif_make_tuple2(env, atom(env, "error"), enif_make_tuple2(env, atom(env, "missing"), atom(env, libs_error ? libs_error : "unknown")))
 
-/* load(Path) -> ok. Sends ready / decoded / load_error to the caller.
- * Dirty IO: it waits for the previous decoder to stop before freeing the
- * buffer that decoder writes into. */
-static ERL_NIF_TERM nif_load(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+static bool get_number(ErlNifEnv *env, ERL_NIF_TERM term, double *out) {
+    ErlNifSInt64 i;
+    if (enif_get_double(env, term, out)) return true;
+    if (!enif_get_int64(env, term, &i)) return false;
+    *out = (double)i;
+    return true;
+}
+
+/* A device id, or nil (0: the system default). */
+static bool get_device_id(ErlNifEnv *env, ERL_NIF_TERM term, int32_t *out) {
+    int id;
+    if (enif_is_identical(term, atom(env, "nil"))) {
+        *out = AA_UNSPECIFIED;
+        return true;
+    }
+    if (!enif_get_int(env, term, &id) || id < 0) return false;
+    *out = id;
+    return true;
+}
+
+typedef struct {
+    ErlNifBinary path;
+    int lanes;
+    int channel[2];
+} source_arg;
+
+/* Sources: [{Path, [left | right]}], 1..MAX_SOURCES of them, 1..2 channels each. */
+static bool parse_sources(ErlNifEnv *env, ERL_NIF_TERM list, source_arg out[MAX_SOURCES], int *count) {
+    unsigned len;
+    if (!enif_get_list_length(env, list, &len) || len < 1 || len > MAX_SOURCES) return false;
+    ERL_NIF_TERM head, tail = list;
+    for (int i = 0; enif_get_list_cell(env, tail, &head, &tail); i++) {
+        const ERL_NIF_TERM *tuple;
+        int arity;
+        unsigned n_channels;
+        if (!enif_get_tuple(env, head, &arity, &tuple) || arity != 2 ||
+            !enif_inspect_iolist_as_binary(env, tuple[0], &out[i].path) ||
+            !enif_get_list_length(env, tuple[1], &n_channels) || n_channels < 1 || n_channels > 2)
+            return false;
+        ERL_NIF_TERM ch, rest = tuple[1];
+        out[i].lanes = 0;
+        while (enif_get_list_cell(env, rest, &ch, &rest)) {
+            char name[8];
+            if (!enif_get_atom(env, ch, name, sizeof(name), ERL_NIF_UTF8)) return false;
+            if (strcmp(name, "left") == 0) out[i].channel[out[i].lanes++] = CHANNEL_LEFT;
+            else if (strcmp(name, "right") == 0) out[i].channel[out[i].lanes++] = CHANNEL_RIGHT;
+            else return false;
+        }
+    }
+    *count = (int)len;
+    return true;
+}
+
+/* Stop what the holder left playing or listening, and end its load's
+ * events (a new generation). Caller holds load_lock and lock. */
+static void stop_everything_locked(void) {
+    stop_listening_locked();
+    close_output(); /* one that won't stop stays open: the next load says so */
+    pthread_mutex_lock(&E.events_lock);
+    atomic_fetch_add(&E.generation, 1);
+    pthread_mutex_unlock(&E.events_lock);
+}
+
+/* acquire(Force) -> {ok, Epoch} | {error, busy}: become the engine's
+ * holder. Without Force only if nobody holds it, the caller already does,
+ * or the holder has died (a crashed screen). Taking it from anyone else
+ * first stops their music and microphone. Epoch numbers the holding; it
+ * stays the same while the same process holds the engine. Dirty IO. */
+static ERL_NIF_TERM nif_acquire(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     REQUIRE_LIBS(env);
-    ErlNifBinary path;
-    if (!enif_inspect_iolist_as_binary(env, argv[0], &path)) return enif_make_badarg(env);
+    bool force = enif_is_identical(argv[0], atom(env, "true"));
+    if (!force && !enif_is_identical(argv[0], atom(env, "false"))) return enif_make_badarg(env);
+    ErlNifPid self;
+    if (!enif_self(env, &self)) return enif_make_badarg(env);
 
-    int generation = atomic_fetch_add(&E.generation, 1) + 1;
-    /* Without the lock: the decoder takes it to install its buffer. A stale
-     * decoder sees the new generation within one codec poll (~10 ms). */
-    if (E.decoder_running) {
-        pthread_join(E.decoder, NULL);
-        E.decoder_running = false;
-    }
-
+    pthread_mutex_lock(&E.load_lock);
     pthread_mutex_lock(&E.lock);
-    stop_listening_locked();
-    /* The callback must not read the buffer we free; if the stream wouldn't
-     * stop, leak it rather than risk that. */
-    if (close_output()) free(E.pcm);
-    else LOGE("leaking the track buffer: output stream did not stop");
-    E.pcm = NULL;
-    E.capacity_frames = 0;
-    E.sample_rate = 0;
-    atomic_store(&E.decoded_frames, 0);
-    atomic_store(&E.decode_done, false);
-    atomic_store(&E.play_frame, 0);
-    atomic_store(&E.paused_track_frame, 0);
-    enif_self(env, &E.owner);
-
-    decode_job *job = calloc(1, sizeof(*job));
-    job->path = strndup((const char *)path.data, path.size);
-    job->generation = generation;
-    E.decoder_running = pthread_create(&E.decoder, NULL, decoder_main, job) == 0;
-    pthread_mutex_unlock(&E.lock);
-
-    if (!E.decoder_running) {
-        free(job->path);
-        free(job);
-        return error_tuple(env, "thread");
+    pthread_mutex_lock(&E.events_lock);
+    bool mine = holder_is_caller(env);
+    bool vacant = !E.held || !enif_is_process_alive(env, &E.owner);
+    pthread_mutex_unlock(&E.events_lock);
+    if (!mine && !vacant && !force) {
+        pthread_mutex_unlock(&E.lock);
+        pthread_mutex_unlock(&E.load_lock);
+        return error_tuple(env, "busy");
     }
+    if (!mine) stop_everything_locked();
+    pthread_mutex_lock(&E.events_lock);
+    if (!mine) {
+        E.owner = self;
+        E.held = true;
+        E.epoch++;
+    }
+    uint64_t epoch = E.epoch;
+    pthread_mutex_unlock(&E.events_lock);
+    pthread_mutex_unlock(&E.lock);
+    pthread_mutex_unlock(&E.load_lock);
+    return enif_make_tuple2(env, atom(env, "ok"), enif_make_uint64(env, epoch));
+}
+
+/* release() -> ok: the holder lets the engine go, music and microphone
+ * stopped; anyone else's call changes nothing. Dirty IO. */
+static ERL_NIF_TERM nif_release(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    REQUIRE_LIBS(env);
+    pthread_mutex_lock(&E.load_lock);
+    pthread_mutex_lock(&E.lock);
+    if (is_holder(env)) {
+        stop_everything_locked();
+        pthread_mutex_lock(&E.events_lock);
+        E.held = false;
+        pthread_mutex_unlock(&E.events_lock);
+    }
+    pthread_mutex_unlock(&E.lock);
+    pthread_mutex_unlock(&E.load_lock);
     return atom(env, "ok");
 }
 
-/* play(FromMs) -> ok | {error, Reason}. */
+/* load(Sources, GuideLane) -> {ok, Generation} | {error, not_owner |
+ * output_stuck | thread}, for the holder only.
+ * Sources: [{Path, [left | right]}]; the kept channels become lanes in
+ * order. GuideLane: the lane test mode analyses, or nil for all of them.
+ * Replaces the loaded track and starts decoding it; the decoders send
+ * {choir_audio, ready | decoded | load_error, Payload, Generation} to the
+ * holder, Generation being this load's number. Serialized by load_lock
+ * (as are acquire and release, so the holder can't change mid-load).
+ * Dirty IO: it stops the output stream and waits for the previous decoders
+ * to stop before freeing the buffers they write into. */
+static ERL_NIF_TERM nif_load(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    REQUIRE_LIBS(env);
+    source_arg sources[MAX_SOURCES];
+    int n_sources = 0, n_lanes = 0, guide = -1;
+    if (!parse_sources(env, argv[0], sources, &n_sources)) return enif_make_badarg(env);
+    for (int i = 0; i < n_sources; i++) n_lanes += sources[i].lanes;
+    if (!enif_is_identical(argv[1], atom(env, "nil")) &&
+        (!enif_get_int(env, argv[1], &guide) || guide < 0 || guide >= n_lanes))
+        return enif_make_badarg(env);
+
+    pthread_mutex_lock(&E.load_lock);
+    pthread_mutex_lock(&E.lock);
+    if (!is_holder(env)) {
+        pthread_mutex_unlock(&E.lock);
+        pthread_mutex_unlock(&E.load_lock);
+        return not_owner(env);
+    }
+    /* Listening stops either way: the caller takes its listening as ended. */
+    stop_listening_locked();
+    /* The output callback reads the lanes and their configuration, so they
+     * change only with no output stream. If it won't stop, give up: the
+     * current track stays loaded (paused). */
+    if (!close_output()) {
+        pthread_mutex_unlock(&E.lock);
+        pthread_mutex_unlock(&E.load_lock);
+        return error_tuple(env, "output_stuck");
+    }
+    /* The old track is gone from here: play and listen(playback) need every
+     * source installed, and its decoders see the new generation. */
+    atomic_store(&E.installed, 0);
+    pthread_mutex_lock(&E.events_lock);
+    uint64_t generation = atomic_fetch_add(&E.generation, 1) + 1;
+    E.ready_sent = false;
+    pthread_mutex_unlock(&E.events_lock);
+    pthread_mutex_unlock(&E.lock);
+
+    /* Without `lock`: a decoder takes it to install its buffers. A stale
+     * decoder stops within one codec poll (~10 ms). */
+    for (int i = 0; i < MAX_SOURCES; i++) {
+        if (E.decoder_running[i]) {
+            pthread_join(E.decoder[i], NULL);
+            E.decoder_running[i] = false;
+        }
+    }
+
+    pthread_mutex_lock(&E.lock);
+    for (int k = 0; k < MAX_LANES; k++) {
+        free(E.lane_pcm[k]);
+        E.lane_pcm[k] = NULL;
+        atomic_store(&E.gain_l[k], 0.0f);
+        atomic_store(&E.gain_r[k], 0.0f);
+    }
+
+    E.n_sources = n_sources;
+    E.n_lanes = n_lanes;
+    E.guide_lane = guide;
+    for (int i = 0, lane = 0; i < n_sources; i++) {
+        track_source *src = &E.src[i];
+        src->lanes = sources[i].lanes;
+        for (int k = 0; k < src->lanes; k++) {
+            src->channel[k] = sources[i].channel[k];
+            src->lane[k] = lane;
+            E.lane_source[lane++] = i;
+        }
+        atomic_store(&src->decoded_frames, 0);
+        atomic_store(&src->done, false);
+    }
+    E.sample_rate = 0;
+    atomic_store(&E.installed, 0);
+    atomic_store(&E.done_sources, 0);
+    atomic_store(&E.failed, false);
+    atomic_store(&E.play_frame, 0);
+    atomic_store(&E.seek_to, -1);
+    atomic_store(&E.paused_track_frame, 0);
+
+    bool started = true;
+    for (int i = 0; i < n_sources; i++) {
+        decode_job *job = calloc(1, sizeof(*job));
+        job->path = strndup((const char *)sources[i].path.data, sources[i].path.size);
+        job->generation = generation;
+        job->index = i;
+        E.decoder_running[i] = pthread_create(&E.decoder[i], NULL, decoder_main, job) == 0;
+        if (!E.decoder_running[i]) {
+            free(job->path);
+            free(job);
+            atomic_store(&E.failed, true); /* the decoders already started stop */
+            started = false;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&E.lock);
+    pthread_mutex_unlock(&E.load_lock);
+    if (!started) return error_tuple(env, "thread");
+    return enif_make_tuple2(env, atom(env, "ok"), enif_make_uint64(env, generation));
+}
+
+/* play(FromMs) -> ok | {error, Reason}. Holder only, like every NIF below
+ * that plays, listens or reads (else {error, not_owner}). */
 static ERL_NIF_TERM nif_play(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     REQUIRE_LIBS(env);
@@ -879,25 +1534,24 @@ static ERL_NIF_TERM nif_play(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
     if (!enif_get_double(env, argv[0], &from_ms)) return enif_make_badarg(env);
 
     pthread_mutex_lock(&E.lock);
-    if (!E.pcm) {
+    if (!is_holder(env)) {
+        pthread_mutex_unlock(&E.lock);
+        return not_owner(env);
+    }
+    if (!tracks_installed()) {
         pthread_mutex_unlock(&E.lock);
         return error_tuple(env, "not_loaded");
     }
-    if (E.out && atomic_load(&E.out_dead)) close_output();
+    if (E.out && atomic_load(&E.out_dead) && !close_output()) {
+        pthread_mutex_unlock(&E.lock);
+        return error_tuple(env, "output_stuck");
+    }
     if (!E.out && open_output() != AA_OK) {
         pthread_mutex_unlock(&E.lock);
         return error_tuple(env, "output_unavailable");
     }
     int64_t frame = (int64_t)(from_ms * E.sample_rate / 1000.0);
-    if (frame < 0) frame = 0;
-    atomic_store(&E.play_frame, frame);
-    atomic_store(&E.seek_to, frame);
-    atomic_store(&E.paused_track_frame, frame);
-    /* Already running (a restart or seek while playing): the callback picks
-     * up seek_to; AAudio refuses requestStart on a started stream, and taking
-     * that refusal as "stopped" would leave the stream playing unpausable. */
-    aaudio_result_t r = atomic_load(&E.playing) ? AA_OK : aa.requestStart(E.out);
-    atomic_store(&E.playing, r == AA_OK);
+    aaudio_result_t r = start_at(frame < 0 ? 0 : frame);
     pthread_mutex_unlock(&E.lock);
     return r == AA_OK ? atom(env, "ok") : error_tuple(env, "start_failed");
 }
@@ -907,6 +1561,10 @@ static ERL_NIF_TERM nif_pause(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
     (void)argv;
     REQUIRE_LIBS(env);
     pthread_mutex_lock(&E.lock);
+    if (!is_holder(env)) {
+        pthread_mutex_unlock(&E.lock);
+        return not_owner(env);
+    }
     if (E.out && atomic_load(&E.playing)) {
         double heard = heard_track_frame(now_ns(), true);
         atomic_store(&E.paused_track_frame, heard >= 0 ? (int64_t)heard : atomic_load(&E.play_frame));
@@ -920,40 +1578,58 @@ static ERL_NIF_TERM nif_pause(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
     return atom(env, "ok");
 }
 
-/* position() -> {playing | paused | empty, Ms}: the song time being heard now. */
+/* position() -> {playing | paused | empty, Ms}: the song time being heard
+ * now. Under the lock throughout: a load resets what it reads. */
 static ERL_NIF_TERM nif_position(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     (void)argv;
     REQUIRE_LIBS(env);
-    if (!E.pcm || !E.sample_rate) return enif_make_tuple2(env, atom(env, "empty"), enif_make_double(env, 0.0));
-    if (atomic_load(&E.playing)) {
-        pthread_mutex_lock(&E.lock);
-        double f = heard_track_frame(now_ns(), true);
+    const char *status = "empty";
+    double ms = 0.0;
+    pthread_mutex_lock(&E.lock);
+    if (!is_holder(env)) {
         pthread_mutex_unlock(&E.lock);
-        if (f >= 0)
-            return enif_make_tuple2(env, atom(env, "playing"), enif_make_double(env, 1000.0 * f / E.sample_rate));
+        return not_owner(env);
     }
-    double paused = 1000.0 * (double)atomic_load(&E.paused_track_frame) / E.sample_rate;
-    return enif_make_tuple2(env, atom(env, "paused"), enif_make_double(env, paused));
+    int rate = E.sample_rate;
+    if (tracks_installed() && rate > 0) {
+        double f = atomic_load(&E.playing) ? heard_track_frame(now_ns(), true) : -1;
+        status = f >= 0 ? "playing" : "paused";
+        ms = 1000.0 * (f >= 0 ? f : (double)atomic_load(&E.paused_track_frame)) / rate;
+    }
+    pthread_mutex_unlock(&E.lock);
+    return enif_make_tuple2(env, atom(env, status), enif_make_double(env, ms));
 }
 
-/* set_mix(VoiceGain, AccompGain, Layout) -> ok. Layout: mixed | voice_left | voice_right. */
+/* set_mix([{Left, Right}]) -> ok: each lane's gain into each ear, in lane
+ * order; lanes past the list are silent. Under events_lock, which the
+ * holder can't change without: no gain lands on a new holder's load. */
 static ERL_NIF_TERM nif_set_mix(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
-    double vg, ag;
-    char layout[16];
-    if (!enif_get_double(env, argv[0], &vg) || !enif_get_double(env, argv[1], &ag) ||
-        !enif_get_atom(env, argv[2], layout, sizeof(layout), ERL_NIF_UTF8))
-        return enif_make_badarg(env);
-    atomic_store(&E.voice_gain, (float)vg);
-    atomic_store(&E.accomp_gain, (float)ag);
-    atomic_store(&E.layout, strcmp(layout, "voice_left") == 0    ? LAYOUT_VOICE_LEFT
-                            : strcmp(layout, "voice_right") == 0 ? LAYOUT_VOICE_RIGHT
-                                                                 : LAYOUT_MIXED);
-    return atom(env, "ok");
+    unsigned len;
+    double gains[MAX_LANES][2] = {{0}};
+    if (!enif_get_list_length(env, argv[0], &len) || len > MAX_LANES) return enif_make_badarg(env);
+    ERL_NIF_TERM head, tail = argv[0];
+    for (int k = 0; enif_get_list_cell(env, tail, &head, &tail); k++) {
+        const ERL_NIF_TERM *pair;
+        int arity;
+        if (!enif_get_tuple(env, head, &arity, &pair) || arity != 2 || !get_number(env, pair[0], &gains[k][0]) ||
+            !get_number(env, pair[1], &gains[k][1]))
+            return enif_make_badarg(env);
+    }
+    pthread_mutex_lock(&E.events_lock);
+    bool mine = holder_is_caller(env);
+    for (int k = 0; mine && k < MAX_LANES; k++) {
+        atomic_store(&E.gain_l[k], gains[k][0] > 0 ? (float)gains[k][0] : 0.0f);
+        atomic_store(&E.gain_r[k], gains[k][1] > 0 ? (float)gains[k][1] : 0.0f);
+    }
+    pthread_mutex_unlock(&E.events_lock);
+    return mine ? atom(env, "ok") : not_owner(env);
 }
 
-/* listen(mic | playback) -> ok | {error, Reason}. */
+/* listen(mic | playback) -> {ok, ListenNumber} | {error, Reason}. A
+ * microphone failure later arrives as {choir_audio, mic_error, Reason,
+ * ListenNumber}. */
 static ERL_NIF_TERM nif_listen(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     REQUIRE_LIBS(env);
@@ -963,45 +1639,38 @@ static ERL_NIF_TERM nif_listen(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
     if (source < 0) return enif_make_badarg(env);
 
     pthread_mutex_lock(&E.lock);
-    stop_listening_locked();
-    if (source == SOURCE_PLAYBACK && !E.sample_rate) {
+    if (!is_holder(env)) {
         pthread_mutex_unlock(&E.lock);
-        return error_tuple(env, "not_loaded");
+        return not_owner(env);
     }
-    if (source == SOURCE_MIC) {
-        aaudio_result_t r = open_input();
-        if (r != AA_OK) {
-            pthread_mutex_unlock(&E.lock);
-            LOGE("input open failed: %d", r);
-            return error_tuple(env, "microphone_unavailable");
-        }
-    }
-    atomic_store(&E.maps_written, 0);
-    atomic_store(&E.in_base_ring, -1);
-    atomic_store(&E.source, source);
-    pthread_mutex_lock(&E.readings_lock);
-    E.readings_count = 0;
-    pthread_mutex_unlock(&E.readings_lock);
-    atomic_store(&E.analysis_run, true);
-    pthread_create(&E.analysis, NULL, analysis_main, NULL);
-    if (E.in) aa.requestStart(E.in);
+    stop_listening_locked();
+    const char *failure = start_listening_locked(source);
+    uint64_t seq = atomic_load(&E.listen_seq);
     pthread_mutex_unlock(&E.lock);
-    return atom(env, "ok");
+    if (failure) return error_tuple(env, failure);
+    return enif_make_tuple2(env, atom(env, "ok"), enif_make_uint64(env, seq));
 }
 
 static ERL_NIF_TERM nif_stop_listening(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     (void)argv;
     pthread_mutex_lock(&E.lock);
-    stop_listening_locked();
+    bool mine = is_holder(env);
+    if (mine) stop_listening_locked();
     pthread_mutex_unlock(&E.lock);
-    return atom(env, "ok");
+    return mine ? atom(env, "ok") : not_owner(env);
 }
 
-/* readings() -> [{SongMs, Hz, Confidence, RmsDb}], oldest first; drains. */
+/* readings() -> [{SongMs, Hz, Confidence, RmsDb}], oldest first; drains.
+ * Under events_lock, so a new holder's readings never go to the old one. */
 static ERL_NIF_TERM nif_readings(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     (void)argv;
+    pthread_mutex_lock(&E.events_lock);
+    if (!holder_is_caller(env)) {
+        pthread_mutex_unlock(&E.events_lock);
+        return not_owner(env);
+    }
     pthread_mutex_lock(&E.readings_lock);
     ERL_NIF_TERM list = enif_make_list(env, 0);
     for (int i = E.readings_count - 1; i >= 0; i--) {
@@ -1012,20 +1681,102 @@ static ERL_NIF_TERM nif_readings(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
     }
     E.readings_count = 0;
     pthread_mutex_unlock(&E.readings_lock);
+    pthread_mutex_unlock(&E.events_lock);
     return list;
 }
 
-/* info() -> map of engine diagnostics (rates, latency, xruns). */
+/* devices() -> [#{id, direction, kind, name}]: connected outputs, then inputs. */
+static ERL_NIF_TERM nif_devices(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    bool attached;
+    JNIEnv *j = jni_env(&attached);
+    if (!j) {
+        LOGE("devices: no JNI environment");
+        return enif_make_list(env, 0);
+    }
+    ERL_NIF_TERM list = enif_make_list(env, 0);
+    if ((*j)->PushLocalFrame(j, 64) == JNI_OK) {
+        list = device_list(env, j);
+        (*j)->PopLocalFrame(j, NULL);
+    } else {
+        jni_failed(j);
+    }
+    if (attached) (*g_jvm)->DetachCurrentThread(g_jvm);
+    return list;
+}
+
+/* set_output(Id | nil) -> ok: the preferred output device (nil: the system
+ * default). An open stream reopens there at once, at the same position. */
+static ERL_NIF_TERM nif_set_output(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    REQUIRE_LIBS(env);
+    int32_t device;
+    if (!get_device_id(env, argv[0], &device)) return enif_make_badarg(env);
+    pthread_mutex_lock(&E.lock);
+    bool mine = is_holder(env);
+    if (mine) {
+        E.out_device = device;
+        if (E.out) reopen_output_locked();
+    }
+    pthread_mutex_unlock(&E.lock);
+    return mine ? atom(env, "ok") : not_owner(env);
+}
+
+/* set_input(Id | nil) -> {ok, ListenNumber} | {error, Reason}: the
+ * preferred microphone. A running mic analysis restarts on it at once (a
+ * new listening number). */
+static ERL_NIF_TERM nif_set_input(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    REQUIRE_LIBS(env);
+    int32_t device;
+    if (!get_device_id(env, argv[0], &device)) return enif_make_badarg(env);
+    const char *failure = NULL;
+    pthread_mutex_lock(&E.lock);
+    if (!is_holder(env)) {
+        pthread_mutex_unlock(&E.lock);
+        return not_owner(env);
+    }
+    E.in_device = device;
+    if (atomic_load(&E.source) == SOURCE_MIC) {
+        stop_listening_locked();
+        failure = start_listening_locked(SOURCE_MIC);
+    }
+    uint64_t seq = atomic_load(&E.listen_seq);
+    pthread_mutex_unlock(&E.lock);
+    if (failure) return error_tuple(env, failure);
+    return enif_make_tuple2(env, atom(env, "ok"), enif_make_uint64(env, seq));
+}
+
+/* output_device() -> Id | nil: the device the open output stream plays on. */
+static ERL_NIF_TERM nif_output_device(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    REQUIRE_LIBS(env);
+    pthread_mutex_lock(&E.lock);
+    int32_t id = E.out && !atomic_load(&E.out_dead) ? aa.getDeviceId(E.out) : AA_UNSPECIFIED;
+    pthread_mutex_unlock(&E.lock);
+    return id > 0 ? enif_make_int(env, id) : atom(env, "nil");
+}
+
+/* info() -> map of engine diagnostics (rates, latency, xruns). Dirty IO:
+ * it takes the lock, so the streams it asks can't close under it. */
 static ERL_NIF_TERM nif_info(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     (void)argv;
-    ERL_NIF_TERM keys[14] = {atom(env, "libraries"),   atom(env, "track_rate"),  atom(env, "decoded_ms"),
-                             atom(env, "decode_done"), atom(env, "output_rate"), atom(env, "output_buffer"),
-                             atom(env, "output_xruns"), atom(env, "input_rate"), atom(env, "listening"),
-                             atom(env, "readings_dropped"), atom(env, "input_timestamps"),
-                             atom(env, "input_fallbacks"), atom(env, "input_latency_ms"),
-                             atom(env, "output_latency_ms")};
-    double decoded_ms = E.sample_rate ? 1000.0 * atomic_load(&E.decoded_frames) / E.sample_rate : 0;
+    enum { N = 18 };
+    ERL_NIF_TERM keys[N] = {atom(env, "libraries"),       atom(env, "track_rate"),     atom(env, "sources"),
+                            atom(env, "lanes"),           atom(env, "decoded_ms"),     atom(env, "decode_done"),
+                            atom(env, "output_rate"),     atom(env, "output_buffer"),  atom(env, "output_xruns"),
+                            atom(env, "output_device"),   atom(env, "input_rate"),     atom(env, "input_device"),
+                            atom(env, "listening"),       atom(env, "readings_dropped"),
+                            atom(env, "input_timestamps"), atom(env, "input_fallbacks"),
+                            atom(env, "input_latency_ms"), atom(env, "output_latency_ms")};
+    pthread_mutex_lock(&E.readings_lock); /* the counter is written under it */
+    int dropped = E.readings_dropped;
+    pthread_mutex_unlock(&E.readings_lock);
+    pthread_mutex_lock(&E.lock);
+    double decoded_ms = E.sample_rate ? 1000.0 * (double)available_frames() / E.sample_rate : 0;
     int source = atomic_load(&E.source);
     /* Output latency: frames written but not yet presented, per the timestamp. */
     double out_latency_ms = -1;
@@ -1034,24 +1785,29 @@ static ERL_NIF_TERM nif_info(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         double presented_now = (double)pos + (double)(now_ns() - time) * aa.getSampleRate(E.out) / 1e9;
         out_latency_ms = 1000.0 * ((double)aa.getFramesWritten(E.out) - presented_now) / aa.getSampleRate(E.out);
     }
-    ERL_NIF_TERM vals[14] = {
+    ERL_NIF_TERM vals[N] = {
         libs_ok ? atom(env, "ok") : atom(env, libs_error ? libs_error : "unknown"),
         enif_make_int(env, E.sample_rate),
+        enif_make_int(env, E.n_sources),
+        enif_make_int(env, E.n_lanes),
         enif_make_double(env, decoded_ms),
-        atom(env, atomic_load(&E.decode_done) ? "true" : "false"),
+        atom(env, E.n_sources > 0 && atomic_load(&E.done_sources) == E.n_sources ? "true" : "false"),
         enif_make_int(env, E.out ? aa.getSampleRate(E.out) : 0),
         enif_make_int(env, E.out ? aa.getBufferSizeInFrames(E.out) : 0),
         enif_make_int(env, E.out ? aa.getXRunCount(E.out) : 0),
+        enif_make_int(env, E.out ? aa.getDeviceId(E.out) : 0),
         enif_make_int(env, E.in ? E.in_rate : 0),
+        enif_make_int(env, E.in ? aa.getDeviceId(E.in) : 0),
         atom(env, source == SOURCE_MIC ? "mic" : source == SOURCE_PLAYBACK ? "playback" : "none"),
-        enif_make_int(env, E.readings_dropped),
+        enif_make_int(env, dropped),
         enif_make_int64(env, atomic_load(&E.in_ts_ok)),
         enif_make_int64(env, atomic_load(&E.in_ts_fallback)),
         enif_make_double(env, atomic_load(&E.in_latency_ns) / 1e6),
         enif_make_double(env, out_latency_ms),
     };
+    pthread_mutex_unlock(&E.lock);
     ERL_NIF_TERM map;
-    enif_make_map_from_arrays(env, keys, vals, 14, &map);
+    enif_make_map_from_arrays(env, keys, vals, N, &map);
     return map;
 }
 
@@ -1059,27 +1815,36 @@ static int on_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
     (void)env;
     (void)priv;
     (void)info;
+    pthread_mutex_init(&E.load_lock, NULL);
     pthread_mutex_init(&E.lock, NULL);
     pthread_mutex_init(&E.readings_lock, NULL);
+    pthread_mutex_init(&E.events_lock, NULL);
     atomic_store(&E.seek_to, -1);
-    atomic_store(&E.voice_gain, 1.0f);
-    atomic_store(&E.accomp_gain, 0.7f);
+    E.guide_lane = -1;
     libs_ok = bind_libraries();
     if (!libs_ok) LOGE("could not bind %s", libs_error);
     return 0;
 }
 
 static ErlNifFunc nif_funcs[] = {
-    {"load", 1, nif_load, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    /* Dirty IO where the call may open, stop or close a stream, or join a thread. */
+    /* Dirty IO where the call may open, stop or close a stream, join a
+     * thread, call into Java, or wait for the lock a load holds while it
+     * stops a stream. */
+    {"acquire", 1, nif_acquire, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"release", 0, nif_release, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"load", 2, nif_load, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"play", 1, nif_play, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"pause", 0, nif_pause, 0},
-    {"position", 0, nif_position, 0},
-    {"set_mix", 3, nif_set_mix, 0},
+    {"pause", 0, nif_pause, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"position", 0, nif_position, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"set_mix", 1, nif_set_mix, 0},
     {"listen", 1, nif_listen, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"stop_listening", 0, nif_stop_listening, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"readings", 0, nif_readings, 0},
-    {"info", 0, nif_info, 0},
+    {"devices", 0, nif_devices, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"set_output", 1, nif_set_output, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"set_input", 1, nif_set_input, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"output_device", 0, nif_output_device, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"info", 0, nif_info, ERL_NIF_DIRTY_JOB_IO_BOUND},
 };
 
 ERL_NIF_INIT(Elixir.ChoirCoach.Audio.Nif, nif_funcs, on_load, NULL, NULL, NULL)

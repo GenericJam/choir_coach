@@ -58,12 +58,6 @@ defmodule ChoirCoach.Songs.HolyForever do
 
   defp part_tracks(:melody) do
     %{
-      piano: %{
-        file: "holy_forever/piano_melody.mp3",
-        bar1_ms: 750.0,
-        voice: :left,
-        label: "Piano"
-      },
       rehearsal: %{
         file: "holy_forever/soprano.mp3",
         bar1_ms: 750.0,

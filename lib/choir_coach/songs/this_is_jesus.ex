@@ -59,12 +59,6 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
 
   defp part_tracks(:melody) do
     %{
-      piano: %{
-        file: "this_is_jesus/piano_melody.mp3",
-        bar1_ms: 560.0,
-        voice: :left,
-        label: "Piano"
-      },
       rehearsal: %{
         file: "this_is_jesus/soprano.mp3",
         bar1_ms: 560.0,

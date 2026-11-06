@@ -40,6 +40,19 @@ defmodule ChoirCoach.Style do
 
   def play_button, do: 0xFFF2EEE6
 
+  @doc "The mix sheet's surface, and the raised cards inside it (open rows, the ear map)."
+  def surface, do: 0xFF161C24
+  def surface_raised, do: 0xFF1E252E
+
+  @doc """
+  Mix swatch colours: the part's (bass a warm tan, the melody a soft rose)
+  and the band's grey. Like the UI accent they sit outside the pitch scale,
+  so a swatch can't be read as pitch feedback.
+  """
+  def swatch(:bass), do: 0xFFE2BE8C
+  def swatch(:melody), do: 0xFFE3B2A4
+  def swatch(:band), do: 0xFFAEB7C2
+
   # ── Alphas ──────────────────────────────────────────────────────────────
 
   def alpha(:active_band), do: 0.025

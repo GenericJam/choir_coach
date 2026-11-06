@@ -3,6 +3,8 @@ defmodule ChoirCoach.App do
 
   use Mob.App
 
+  alias ChoirCoach.Audio.Lease
+
   @impl Mob.App
   def navigation(_platform) do
     stack(:main, root: ChoirCoach.SongsScreen)
@@ -28,6 +30,10 @@ defmodule ChoirCoach.App do
     Ecto.Migrator.with_repo(ChoirCoach.Repo, fn repo ->
       Ecto.Migrator.run(repo, migrations_dir(), :up, all: true)
     end)
+
+    # Hands the audio engine back to the practice screen when the Audio
+    # screen that borrowed it goes away (see ChoirCoach.Audio.Lease).
+    {:ok, _} = Lease.start_link()
 
     # Practice is held in portrait, like a phone normally is.
     Mob.Device.lock_orientation(:portrait)

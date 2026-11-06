@@ -8,10 +8,13 @@ defmodule ChoirCoach.SongsScreenTest do
     for module <- Songs.all() do
       bars = Enum.map(module.bass().bars, &{&1.number, &1.start_ms, &1.dur_ms})
 
-      for {_part, %{song: song, tracks: tracks}} <- Songs.parts(module) do
+      for {part, %{song: song, tracks: tracks}} <- Songs.parts(module) do
         assert Enum.map(song.bars, &{&1.number, &1.start_ms, &1.dur_ms}) == bars
-        assert %{rehearsal: %{file: file}, piano: %{file: piano}} = tracks
-        assert String.ends_with?(file, ".mp3") and String.ends_with?(piano, ".mp3")
+
+        # Each part's rehearsal track, the shared choir and demo; a piano only for the bass.
+        assert Enum.all?(Map.values(tracks), &String.ends_with?(&1.file, ".mp3"))
+        assert Map.has_key?(tracks, :rehearsal) and Map.has_key?(tracks, :split)
+        assert Map.has_key?(tracks, :piano) == (part == :bass)
       end
     end
   end

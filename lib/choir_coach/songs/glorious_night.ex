@@ -63,12 +63,6 @@ defmodule ChoirCoach.Songs.GloriousNight do
 
   defp part_tracks(:melody) do
     %{
-      piano: %{
-        file: "glorious_night/piano_melody.mp3",
-        bar1_ms: 358.0,
-        voice: :left,
-        label: "Piano"
-      },
       rehearsal: %{
         file: "glorious_night/soprano.mp3",
         bar1_ms: 358.0,

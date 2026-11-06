@@ -1,7 +1,8 @@
 defmodule ChoirCoach.ControlsView do
   @moduledoc """
   Canvas ops for the transport row (restart, back one bar, play / pause,
-  loop, accompaniment volume) and the progress track with its loop range.
+  loop, the mix), the progress track with its loop range, and the header's
+  headphones icon.
 
   Each control is its own small canvas so it can take a tap. Icons are
   drawn from lines and arcs in the handoff's chrome colours; captions sit
@@ -18,7 +19,7 @@ defmodule ChoirCoach.ControlsView do
   def size, do: @size
   def play_size, do: @play
 
-  @doc "Ops for a secondary control: `:restart`, `:back_bar`, `:loop` or `:volume`."
+  @doc "Ops for a secondary control: `:restart`, `:back_bar`, `:loop` or `:mix`."
   @spec control(atom(), String.t(), boolean()) :: [map()]
   def control(kind, caption, active \\ false) do
     cx = @size / 2
@@ -121,52 +122,32 @@ defmodule ChoirCoach.ControlsView do
     ]
   end
 
-  defp icon(:volume, cx, cy, color) do
-    [
-      path(
-        [
-          {cx - 11, cy - 4},
-          {cx - 6, cy - 4},
-          {cx, cy - 9},
-          {cx, cy + 9},
-          {cx - 6, cy + 4},
-          {cx - 11, cy + 4}
-        ],
-        color: color,
-        width: 2,
-        closed: true,
-        join: :round
-      ),
-      arc(cx + 2, cy, 5, -45, 45, color: color, width: 2, cap: :round),
-      arc(cx + 2, cy, 10, -45, 45, color: color, width: 2, cap: :round)
-    ]
-  end
-
-  @doc "A settings gear filling a `size`-square canvas."
-  @spec gear(number()) :: [map()]
-  def gear(size) do
-    c = size / 2
-    color = Style.text_secondary()
-
-    teeth =
-      for i <- 0..7 do
-        a = i * :math.pi() / 4
-
-        line(
-          c + 7 * :math.cos(a),
-          c + 7 * :math.sin(a),
-          c + 10 * :math.cos(a),
-          c + 10 * :math.sin(a),
+  # Three slider tracks with their knobs at different heights.
+  defp icon(:mix, cx, cy, color) do
+    for {dx, knob} <- [{-8, -3}, {0, 4}, {8, -6}] do
+      [
+        line(cx + dx, cy - 10, cx + dx, cy + 10, color: color, width: 2, cap: :round),
+        line(cx + dx - 4, cy + knob, cx + dx + 4, cy + knob,
           color: color,
-          width: 3,
+          width: 2.4,
           cap: :round
         )
-      end
+      ]
+    end
+  end
+
+  @doc "A headphones icon filling a `size`-square canvas, in `color`."
+  @spec headphones(number(), non_neg_integer()) :: [map()]
+  def headphones(size, color \\ Style.text_secondary()) do
+    s = size / 28
+    c = size / 2
 
     List.flatten([
-      teeth,
-      circle(c, c, 7, color: color, width: 2.2),
-      circle(c, c, 2.5, color: color, fill: true)
+      arc(c, c + 2 * s, 9 * s, 180, 360, color: color, width: 2 * s, cap: :round),
+      line(c - 9 * s, c + 2 * s, c - 9 * s, c + 7 * s, color: color, width: 2 * s, cap: :round),
+      line(c + 9 * s, c + 2 * s, c + 9 * s, c + 7 * s, color: color, width: 2 * s, cap: :round),
+      rect(c - 11 * s, c + 4 * s, 5 * s, 8 * s, color: color, fill: true, radius: 2 * s),
+      rect(c + 6 * s, c + 4 * s, 5 * s, 8 * s, color: color, fill: true, radius: 2 * s)
     ])
   end
 

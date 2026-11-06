@@ -61,12 +61,6 @@ defmodule ChoirCoach.Songs.GraceOfGod do
 
   defp part_tracks(:melody) do
     %{
-      piano: %{
-        file: "grace_of_god/piano_melody.mp3",
-        bar1_ms: 375.0,
-        voice: :left,
-        label: "Piano"
-      },
       rehearsal: %{
         file: "grace_of_god/soprano.mp3",
         bar1_ms: 375.0,
