@@ -599,9 +599,17 @@ static void close_output(void) {
     atomic_store(&E.playing, false);
 }
 
-/* Track frame being heard at monotonic time `t_ns`, or −1 when unknown. */
-static double heard_track_frame(int64_t t_ns) {
+/* Track frame being heard at monotonic time `t_ns`, or −1 when unknown.
+ *
+ * `settled` is the position the app shows and pauses at: around a seek it
+ * reports the target, both before the callback applies it and while audio
+ * from before it drains from the buffer. Otherwise a restart from the song's
+ * end reads as still at the end for a frame, and the screen stops it again.
+ * Mic readings use the true mapping (settled = false). */
+static double heard_track_frame(int64_t t_ns, bool settled) {
     if (!E.out) return -1;
+    int64_t pending = atomic_load(&E.seek_to);
+    if (settled && pending >= 0) return (double)pending;
     int64_t pos, time;
     segment seg[2];
     read_segments(seg);
@@ -612,6 +620,7 @@ static double heard_track_frame(int64_t t_ns) {
         time = now_ns();
     }
     double stream_frame = (double)pos + (double)(t_ns - time) * aa.getSampleRate(E.out) / 1e9;
+    if (settled && stream_frame < (double)seg[0].stream_frame) return (double)seg[0].track_frame;
     const segment *s = stream_frame >= (double)seg[0].stream_frame ? &seg[0] : &seg[1];
     double track = (double)s->track_frame + (stream_frame - (double)s->stream_frame) *
                                                 (double)E.sample_rate / aa.getSampleRate(E.out);
@@ -701,7 +710,7 @@ static void *analysis_main(void *arg) {
              * listen() joins this thread while holding the lock. */
             int64_t t = capture_time(read - half_window, written, rate);
             if (!atomic_load(&E.playing) || pthread_mutex_trylock(&E.lock) != 0) continue;
-            song_frame = heard_track_frame(t);
+            song_frame = heard_track_frame(t, false);
             pthread_mutex_unlock(&E.lock);
             if (song_frame < 0) continue;
         }
@@ -815,7 +824,10 @@ static ERL_NIF_TERM nif_play(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
     atomic_store(&E.play_frame, frame);
     atomic_store(&E.seek_to, frame);
     atomic_store(&E.paused_track_frame, frame);
-    aaudio_result_t r = aa.requestStart(E.out);
+    /* Already running (a restart or seek while playing): the callback picks
+     * up seek_to; AAudio refuses requestStart on a started stream, and taking
+     * that refusal as "stopped" would leave the stream playing unpausable. */
+    aaudio_result_t r = atomic_load(&E.playing) ? AA_OK : aa.requestStart(E.out);
     atomic_store(&E.playing, r == AA_OK);
     pthread_mutex_unlock(&E.lock);
     return r == AA_OK ? atom(env, "ok") : error_tuple(env, "start_failed");
@@ -827,10 +839,12 @@ static ERL_NIF_TERM nif_pause(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
     REQUIRE_LIBS(env);
     pthread_mutex_lock(&E.lock);
     if (E.out && atomic_load(&E.playing)) {
-        double heard = heard_track_frame(now_ns());
+        double heard = heard_track_frame(now_ns(), true);
         atomic_store(&E.paused_track_frame, heard >= 0 ? (int64_t)heard : atomic_load(&E.play_frame));
-        aa.requestPause(E.out);
     }
+    /* Always, even if we believe it stopped: pausing a paused stream is harmless,
+     * missing a running one leaves the music going. */
+    if (E.out && !atomic_load(&E.out_dead)) aa.requestPause(E.out);
     atomic_store(&E.playing, false);
     pthread_mutex_unlock(&E.lock);
     return atom(env, "ok");
@@ -844,7 +858,7 @@ static ERL_NIF_TERM nif_position(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
     if (!E.pcm || !E.sample_rate) return enif_make_tuple2(env, atom(env, "empty"), enif_make_double(env, 0.0));
     if (atomic_load(&E.playing)) {
         pthread_mutex_lock(&E.lock);
-        double f = heard_track_frame(now_ns());
+        double f = heard_track_frame(now_ns(), true);
         pthread_mutex_unlock(&E.lock);
         if (f >= 0)
             return enif_make_tuple2(env, atom(env, "playing"), enif_make_double(env, 1000.0 * f / E.sample_rate));

@@ -237,7 +237,7 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   def handle_info({:tap, :restart}, socket) do
-    {:noreply, socket |> seek(loop_start(socket.assigns)) |> play()}
+    {:noreply, socket |> Mob.Socket.assign(:t_ms, loop_start(socket.assigns)) |> play()}
   end
 
   def handle_info({:tap, :back_bar}, socket) do
