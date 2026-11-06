@@ -27,8 +27,6 @@ defmodule ChoirCoach.PracticeScreen do
     Style
   }
 
-  alias ChoirCoach.Songs.GloriousNight
-
   @frame_ms 33
   @recentre_tau_ms 150.0
   # A reading this close to a written note counts for it (an early or late
@@ -44,8 +42,7 @@ defmodule ChoirCoach.PracticeScreen do
   @fallback_screen {390.0, 844.0}
 
   def mount(params, _session, socket) do
-    song = Map.get_lazy(params, :song, &GloriousNight.bass/0)
-    tracks = Map.get_lazy(params, :tracks, &GloriousNight.tracks/0)
+    %{song: song, tracks: tracks} = params
     {w, h} = Map.get_lazy(params, :screen, &screen_size/0)
     engine = Audio.engine()
     mode = hd(Enum.filter(@track_modes, &Map.has_key?(tracks, &1)))
@@ -174,12 +171,21 @@ defmodule ChoirCoach.PracticeScreen do
   defp header(assigns) do
     song = assigns.song
     header_height = @header_height
+    back_tap = {self(), :back}
     track_tap = {self(), :track}
     settings_tap = {self(), :settings}
     pill = part_name(song.part) <> " · " <> track_label(assigns.track_mode)
 
     ~MOB"""
-    <Row height={header_height} padding_left={20} padding_right={20} align={:center}>
+    <Row height={header_height} padding_left={8} padding_right={20} align={:center}>
+      <Text
+        text="‹"
+        on_tap={back_tap}
+        text_size={30}
+        text_color={Style.text_secondary()}
+        padding_left={8}
+        padding_right={10}
+      />
       <Column weight={1}>
         <Text
           text={song.title}
@@ -227,10 +233,14 @@ defmodule ChoirCoach.PracticeScreen do
   def subtitle(%{listening: :playback}), do: "Test mode: listening to the track itself"
 
   def subtitle(%{song: song}) do
-    "Bars #{hd(song.bars).number}–#{List.last(song.bars).number} · #{Song.key_name(song)} · ♩ = #{song.tempo_bpm}"
+    "Bars #{hd(song.bars).number}–#{List.last(song.bars).number} · #{Song.key_name(song)} · ♩ = #{round(song.tempo_bpm)}"
   end
 
   # ── Events ───────────────────────────────────────────────────────────────
+
+  def handle_info({:tap, :back}, socket) do
+    {:noreply, Mob.Socket.pop_screen(socket)}
+  end
 
   def handle_info({:tap, :play_pause}, socket) do
     if socket.assigns.playing, do: {:noreply, pause(socket)}, else: {:noreply, play(socket)}
@@ -332,6 +342,13 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # Leaving the song (back, or the system back gesture): the engine is one
+  # per app, so stop the music here or it plays on under the song list.
+  def terminate(_reason, socket) do
+    if socket.assigns[:audio], do: pause(socket)
+    :ok
+  end
 
   # ── Playback ─────────────────────────────────────────────────────────────
 

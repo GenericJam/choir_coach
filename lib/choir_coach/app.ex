@@ -5,7 +5,7 @@ defmodule ChoirCoach.App do
 
   @impl Mob.App
   def navigation(_platform) do
-    stack(:main, root: ChoirCoach.PracticeScreen)
+    stack(:main, root: ChoirCoach.SongsScreen)
   end
 
   @impl Mob.App
@@ -31,7 +31,7 @@ defmodule ChoirCoach.App do
 
     # Practice is held in portrait, like a phone normally is.
     Mob.Device.lock_orientation(:portrait)
-    Mob.Screen.start_root(ChoirCoach.PracticeScreen)
+    Mob.Screen.start_root(ChoirCoach.SongsScreen)
     Mob.Dist.ensure_started(node: :"choir_coach_android@127.0.0.1", cookie: :mob_secret)
   end
 

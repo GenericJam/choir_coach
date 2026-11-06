@@ -64,7 +64,7 @@ defmodule ChoirCoach.Pitch do
     Enum.at(@names, Integer.mod(midi, 12)) <> Integer.to_string(div(midi, 12) - 1)
   end
 
-  @doc "Display form of a written name: `\"Bb2\"` → `\"B♭2\"`, `\"F#3\"` → `\"F♯3\"`."
+  @doc ~S|Display form of a written name: "Bb2" → "B♭2", "F#3" → "F♯3".|
   @spec display(String.t()) :: String.t()
   def display(name), do: name |> String.replace("#", "♯") |> String.replace("b", "♭")
 

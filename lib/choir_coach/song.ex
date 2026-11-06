@@ -46,7 +46,18 @@ defmodule ChoirCoach.Song do
     prints (nil when the key signature or an earlier note in the bar covers it).
     """
     @enforce_keys [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, :name, :step]
-    defstruct [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, :name, :step, :accidental, slur: false]
+    defstruct [
+      :start_ms,
+      :dur_ms,
+      :midi,
+      :lyric,
+      :bar,
+      :beats,
+      :name,
+      :step,
+      :accidental,
+      slur: false
+    ]
 
     @type t :: %__MODULE__{
             start_ms: float(),

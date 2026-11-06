@@ -3,8 +3,13 @@ defmodule ChoirCoach.PracticeScreenTest do
 
   alias ChoirCoach.Audio.Fake
   alias ChoirCoach.{PracticeScreen, Song}
+  alias ChoirCoach.Songs.GloriousNight
 
-  @params %{screen: {411.0, 914.0}}
+  @params %{
+    screen: {411.0, 914.0},
+    song: GloriousNight.bass(),
+    tracks: GloriousNight.tracks()
+  }
 
   # Mount and deliver the engine's ready message (the fake sends it on load).
   defp ready_view do

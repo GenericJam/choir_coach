@@ -3,6 +3,7 @@ defmodule ChoirCoach.SettingsScreenTest do
   use Mob.ScreenCase, async: false
 
   alias ChoirCoach.{PracticeScreen, Settings, SettingsScreen}
+  alias ChoirCoach.Songs.GloriousNight
 
   setup do
     Mob.State.delete(:mic_delay_ms)
@@ -40,7 +41,11 @@ defmodule ChoirCoach.SettingsScreenTest do
   test "the practice screen's gear pauses and opens settings" do
     view =
       PracticeScreen
-      |> mount_screen(%{screen: {411.0, 914.0}})
+      |> mount_screen(%{
+        screen: {411.0, 914.0},
+        song: GloriousNight.bass(),
+        tracks: GloriousNight.tracks()
+      })
       |> render_info({:choir_audio, :ready, %{}})
       |> render_info({:tap, :play_pause})
       |> render_info({:tap, :settings})
