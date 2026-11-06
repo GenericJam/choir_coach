@@ -19,6 +19,7 @@ defmodule ChoirCoach.Songs.GloriousNight do
   @doc "Where bar 1 falls on each track (ms), and which channel holds the voices."
   def tracks do
     %{
+      piano: %{file: "glorious_night/piano.mp3", bar1_ms: 358.0, voice: :left, label: "Piano"},
       rehearsal: %{
         file: "glorious_night/bass.mp3",
         bar1_ms: 358.0,

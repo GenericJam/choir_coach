@@ -90,6 +90,16 @@ the others about 12 dB down; accompaniment right), `split.mp3`
 file has the bass alone, and the part tracks can't be unmixed (each is its
 own vocal mix). Offsets live in each song's `tracks/0`.
 
+`piano.mp3` is generated, not downloaded: the bass part as piano notes (as
+at in-person rehearsal), left, over the rehearsal track's accompaniment,
+right, on the rehearsal track's timeline. It is the practice screen's
+default track. Regenerate it after any change to a song's notes or timing:
+`brew install fluid-synth`, get a General MIDI SoundFont (GeneralUser GS
+lives in `~/.local/share/soundfonts/` here), then
+`SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module>`.
+`scripts/align_track.exs <Module> piano` with `ALIGN_FIT=0` checks it: every
+note on pitch, every bar at 100 % at shift 0.
+
 ## Adding a song
 
 1. Download from its Drive folder (score PDF, Bass rehearsal, Split, Demo)
@@ -105,7 +115,9 @@ own vocal mix). Offsets live in each song's `tracks/0`.
 4. Split and Demo offsets: cross-correlate onset envelopes against the
    rehearsal track (they share the accompaniment); check the lag holds in
    every 30 s window.
-5. Add the module to `ChoirCoach.Songs`.
+5. `scripts/render_piano.exs <Module>` renders `piano.mp3`; add it to
+   `tracks/0` with the rehearsal track's `bar1_ms`.
+6. Add the module to `ChoirCoach.Songs`.
 
 ## Working on it
 

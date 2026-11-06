@@ -88,7 +88,7 @@ defmodule ChoirCoach.PracticeScreenTest do
     view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
 
     switched = render_info(view, {:tap, :track})
-    assert assigns(switched).track_mode == :split
+    assert assigns(switched).track_mode == :rehearsal
     assert assigns(switched).audio_status == :loading
     refute assigns(switched).playing
 
@@ -97,10 +97,10 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert_in_delta assigns(resumed).t_ms, 40_000.0, 50
 
     modes =
-      Enum.scan(1..2, resumed, fn _, v -> render_info(v, {:tap, :track}) end)
+      Enum.scan(1..3, resumed, fn _, v -> render_info(v, {:tap, :track}) end)
       |> Enum.map(&assigns(&1).track_mode)
 
-    assert modes == [:demo, :rehearsal]
+    assert modes == [:split, :demo, :piano]
   end
 
   test "a track that fails to load says so" do

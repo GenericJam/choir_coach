@@ -37,7 +37,7 @@ defmodule ChoirCoach.PracticeScreen do
   @header_height 55
   @controls_height 150
   @volume_steps [100, 70, 40, 0]
-  @track_modes [:rehearsal, :split, :demo]
+  @track_modes [:piano, :rehearsal, :split, :demo]
   # Reference artboard, used where the device can't be asked (host tests).
   @fallback_screen {390.0, 844.0}
 
@@ -569,6 +569,7 @@ defmodule ChoirCoach.PracticeScreen do
     Enum.at(@volume_steps, rem(i + 1, length(@volume_steps)))
   end
 
+  defp track_label(:piano), do: "Piano"
   defp track_label(:rehearsal), do: "Rehearsal"
   defp track_label(:split), do: "Choir"
   defp track_label(:demo), do: "Demo"

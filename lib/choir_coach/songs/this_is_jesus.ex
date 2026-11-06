@@ -20,6 +20,7 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
   @doc "Where bar 1 falls on each track (ms), and which channel holds the voices."
   def tracks do
     %{
+      piano: %{file: "this_is_jesus/piano.mp3", bar1_ms: 560.0, voice: :left, label: "Piano"},
       rehearsal: %{
         file: "this_is_jesus/bass.mp3",
         bar1_ms: 560.0,
