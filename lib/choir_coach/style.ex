@@ -140,6 +140,45 @@ defmodule ChoirCoach.Style do
   def type(:caption), do: 11
   def type(:staff_lyric), do: 21
 
+  @doc "A chrome type size for `layout` (see `ui/2`)."
+  def type(token, layout), do: ui(type(token), layout)
+
+  # ── Layout ──────────────────────────────────────────────────────────────
+
+  @doc """
+  The layout for a window's size class (`assigns.size_class`, which Mob
+  keeps current): `:tablet` when it is regular both ways (an iPad or
+  Android tablet full screen, either orientation), else `:phone` (phones in
+  either orientation, an iPad in Slide Over or narrow Split View).
+  """
+  def layout({:regular, :regular}), do: :tablet
+  def layout(_size_class), do: :phone
+
+  @doc """
+  A chrome size (text, controls, padding, in dp) for `layout`: the phone's
+  as designed, a fifth larger on a tablet, whose phone-sized controls look
+  tiny on an 834 pt wide screen.
+  """
+  def ui(size, :phone), do: size
+  def ui(size, :tablet), do: round(size * ui_scale(:tablet))
+
+  @doc "How much `ui/2` enlarges chrome for `layout`."
+  def ui_scale(:phone), do: 1.0
+  def ui_scale(:tablet), do: 1.2
+
+  @doc """
+  The reference artboard's width. A tablet keeps the time scale the design
+  has at this width, so a wider roll shows more of the song rather than the
+  same seconds stretched.
+  """
+  def reference_width, do: 390.0
+
+  @doc """
+  Width of the song list's and the Audio screen's content on a tablet
+  window `screen_w` wide: at most 640, with 20 dp gutters either side.
+  """
+  def content_width(screen_w), do: min(640, screen_w - 40)
+
   # ── Pitch-feedback scale ────────────────────────────────────────────────
 
   # Stops from the handoff, cents → RGB. Flat runs cool and darker, sharp runs

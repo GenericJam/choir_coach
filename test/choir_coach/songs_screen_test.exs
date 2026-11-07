@@ -44,4 +44,16 @@ defmodule ChoirCoach.SongsScreenTest do
   test "the card says the key, tempo and length" do
     assert SongsScreen.facts(ThisIsJesus.bass()) =~ ~r/^B♭ major · ♩ = 77 · 81 bars · \d:\d\d$/
   end
+
+  test "on a tablet the list is at most 640 wide, and narrower than a narrower window" do
+    width = fn w ->
+      view =
+        mount_screen(SongsScreen, %{screen: {w, 1000.0}}, %{}, size_class: {:regular, :regular})
+
+      Enum.find_value(find_all(view, :column), & &1.props[:width])
+    end
+
+    assert width.(834.0) == 640
+    assert width.(600.0) == 560.0
+  end
 end

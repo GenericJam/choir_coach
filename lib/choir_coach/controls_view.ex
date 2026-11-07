@@ -30,9 +30,18 @@ defmodule ChoirCoach.ControlsView do
   def control_width(row_width, count),
     do: (row_width - @play) |> Kernel./(count) |> floor() |> min(@size) |> max(@min_size)
 
-  @doc "Ops for a secondary control (`:restart`, `:back_bar`, `:forward_bar`, `:loop`, `:mix`), `width` wide."
-  @spec control(atom(), String.t(), boolean(), number()) :: [map()]
-  def control(kind, caption, active \\ false, width \\ @size) do
+  @doc """
+  Ops for a secondary control (`:restart`, `:back_bar`, `:forward_bar`,
+  `:loop`, `:mix`), `width` wide, drawn `scale` times the phone's size (its
+  canvas is then `size() * scale` tall).
+  """
+  @spec control(atom(), String.t(), boolean(), number(), number()) :: [map()]
+  def control(kind, caption, active \\ false, width \\ @size, scale \\ 1.0)
+
+  def control(kind, caption, active, width, scale) when scale != 1.0,
+    do: kind |> control(caption, active, width / scale) |> scaled(scale)
+
+  def control(kind, caption, active, width, _scale) do
     cx = width / 2
     cy = 24
 
@@ -57,9 +66,12 @@ defmodule ChoirCoach.ControlsView do
     ])
   end
 
-  @doc "Ops for the play / pause button."
-  @spec play_button(boolean()) :: [map()]
-  def play_button(playing) do
+  @doc "Ops for the play / pause button, drawn `scale` times the phone's size."
+  @spec play_button(boolean(), number()) :: [map()]
+  def play_button(playing, scale \\ 1.0)
+  def play_button(playing, scale) when scale != 1.0, do: playing |> play_button() |> scaled(scale)
+
+  def play_button(playing, _scale) do
     c = @play / 2
 
     icon =
@@ -73,6 +85,21 @@ defmodule ChoirCoach.ControlsView do
       end
 
     List.flatten([circle(c, c, c, color: Style.play_button(), fill: true), icon])
+  end
+
+  # Canvas ops drawn `s` times larger: every position and length, the stroke
+  # widths, radii, text sizes and dashes.
+  @lengths [:x, :y, :x1, :y1, :x2, :y2, :r, :rx, :ry, :w, :h, :width, :radius, :size]
+
+  defp scaled(ops, s), do: Enum.map(ops, &scale_op(&1, s))
+
+  defp scale_op(op, s) do
+    Map.new(op, fn
+      {key, v} when key in @lengths and is_number(v) -> {key, v * s}
+      {:points, points} -> {:points, Enum.map(points, fn [x, y] -> [x * s, y * s] end)}
+      {:dash, dash} -> {:dash, Enum.map(dash, &(&1 * s))}
+      other -> other
+    end)
   end
 
   defp icon(:restart, cx, cy, color) do

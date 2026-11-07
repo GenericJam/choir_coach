@@ -114,4 +114,57 @@ defmodule ChoirCoach.PracticeViewTest do
     assert gone.status == :on_pitch
     assert "Sing" in texts_at(song, 600.0, gone)
   end
+
+  # Staff lyrics (by their size) drawn at the song's start on a canvas
+  # `width` wide (`extra` frame keys added), as {syllable, x}.
+  defp staff_lyrics(song, width, extra) do
+    size = Style.type(:staff_lyric)
+
+    %{
+      song: song,
+      t_ms: 0.0,
+      width: width,
+      height: 600.0,
+      semitone: 40.0,
+      center_midi: 48.0,
+      trace: [],
+      feedback: Feedback.new(),
+      now_ms: 0
+    }
+    |> Map.merge(extra)
+    |> PracticeView.ops()
+    |> List.flatten()
+    |> Enum.flat_map(fn
+      %{op: :text, text: s, x: x, size: ^size} -> [{s, x}]
+      _ -> []
+    end)
+    |> Enum.sort_by(&elem(&1, 1))
+  end
+
+  test "a tablet keeps the phone's time scale, so its wider roll shows more of the song" do
+    # One syllable a second.
+    song =
+      Song.build(
+        title: "Test",
+        clef: :bass,
+        tempo_bpm: 60,
+        beats_per_bar: 4,
+        first_bar: 1,
+        bars: [
+          [n: {"C3", 1, "a"}, n: {"D3", 1, "b"}, n: {"E3", 1, "c"}, n: {"F3", 1, "d"}],
+          [n: {"G3", 1, "e"}, n: {"A3", 1, "f"}, n: {"G3", 1, "g"}, n: {"F3", 1, "h"}]
+        ]
+      )
+
+    phone = staff_lyrics(song, Style.reference_width(), %{})
+    tablet = staff_lyrics(song, 834.0, %{time_width: Style.reference_width()})
+
+    # The phone sees under 3 s ahead; the tablet more than twice that.
+    assert Enum.map(phone, &elem(&1, 0)) == ~w(a b c)
+    assert Enum.map(tablet, &elem(&1, 0)) == ~w(a b c d e f g)
+
+    # A second is as wide on both.
+    gap = fn lyrics -> Enum.into(lyrics, %{}) |> then(&(&1["b"] - &1["a"])) end
+    assert_in_delta gap.(phone), gap.(tablet), 0.2
+  end
 end

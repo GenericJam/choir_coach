@@ -537,6 +537,212 @@ defmodule ChoirCoach.PracticeScreenTest do
     refute PracticeScreen.subtitle(assigns(again)) =~ "New headphones"
   end
 
+  describe "on a tablet" do
+    @tablet %{@params | screen: {834.0, 1194.0}}
+
+    defp tablet_view(params \\ @tablet) do
+      PracticeScreen
+      |> mount_screen(params, %{}, size_class: {:regular, :regular})
+      |> ready()
+    end
+
+    defp ids(view), do: for(%{props: %{id: id}} <- flatten(view), do: id)
+
+    test "What you hear is docked: a strip per mix row, no Mix button, every tap kept while playing" do
+      playing = tablet_view() |> put_time(10_000.0) |> render_info({:tap, :play_pause})
+      ids = ids(playing)
+
+      refute "ctl_mix" in ids
+      assert Enum.all?(~w(row_part_piano row_voices row_band preset_right_ear), &(&1 in ids))
+
+      # Each strip has its level; balance has no effect on the fake's phone
+      # speaker, so no balance slider.
+      sliders = for %{type: :slider, props: %{on_change: {_, tag}}} <- flatten(playing), do: tag
+
+      assert Enum.sort(sliders) ==
+               Enum.sort(for id <- [:part_piano, :voices, :band], do: {:level, id})
+
+      assert [_, _, _] = find_all(playing, :text, text: "Balance: none in mono")
+
+      assert for({tag, false} <- taps(playing), do: tag) == []
+      assert {{:toggle_row, :band}, true} in taps(playing)
+      assert {{:preset, :rehearsal}, true} in taps(playing)
+
+      # The strips act as the sheet's rows did.
+      quiet = render_info(playing, {:change, {:level, :band}, 30.0})
+      assert {assigns(quiet).mix.preset, assigns(quiet).playing} == {:custom, true}
+      assert find(quiet, :text, text: "Level 30")
+      off = render_info(quiet, {:tap, {:toggle_row, :band}})
+      refute Enum.find(assigns(off).mix.rows, &(&1.id == :band)).on
+
+      # A whole recording plays as it is: no strips, still no Mix button.
+      demo = render_info(off, {:tap, {:preset, :demo}})
+      refute Enum.any?(ids(demo), &(&1 in ~w(row_band ctl_mix)))
+    end
+
+    test "the progress track shares the transport row and scrubs across its own width" do
+      view = tablet_view() |> put_time(10_000.0)
+
+      row =
+        Enum.find(find_all(view, :row), fn row ->
+          ids = for(%{props: %{id: id}} <- row.children, do: id)
+          "ctl_play" in ids and "progress" in ids
+        end)
+
+      assert row
+      track = find(view, :canvas, id: "progress")
+      duration = Song.duration_ms(assigns(view).song)
+
+      moved =
+        view
+        |> render_info({:drag, :scrub, %{x: track.props.width / 4, phase: :began}})
+        |> render_info({:drag, :scrub, %{x: track.props.width / 4, phase: :ended}})
+
+      assert_in_delta assigns(moved).t_ms, duration / 4, 1
+    end
+
+    test "balance shows its value and slider where it can apply, and no slider in mono" do
+      view = tablet_view() |> render_info({:tap, {:preset, :right_ear}})
+
+      balance_sliders = fn v ->
+        for %{type: :slider, props: %{on_change: {_, {:balance, id}}}} <- flatten(v), do: id
+      end
+
+      assert assigns(view).mono
+      assert balance_sliders.(view) == []
+
+      phones = through_audio(view, {:audio_output, 31})
+      refute assigns(phones).mono
+      assert Enum.sort(balance_sliders.(phones)) == [:band, :part_piano, :voices]
+      # The piano in the right ear, the band in the left.
+      assert find(phones, :text, text: "Balance R 80")
+      assert find(phones, :text, text: "Balance L 60")
+    end
+
+    test "with Custom and Save showing every preset chip is in the dock, which grows a line for them" do
+      view = tablet_view()
+      custom = render_info(view, {:change, {:level, :band}, 30.0})
+      wrap = find(custom, :wrap)
+      in_wrap = for(%{props: %{id: id}} <- flatten(wrap), do: id)
+
+      assert Enum.all?(
+               ~w(custom save_mix preset_rehearsal preset_right_ear preset_full_choir preset_demo),
+               &(&1 in in_wrap)
+             )
+
+      canvas_h = fn v ->
+        Enum.max(for %{type: :canvas, props: %{height: h}} <- flatten(v), do: h)
+      end
+
+      assert canvas_h.(custom) < canvas_h.(view)
+    end
+
+    test "the trace reaches back across the tablet's longer past" do
+      song = assigns(tablet_view()).song
+      from = Song.bar_start(song, 20)
+      t = from + 4_000
+
+      earliest = fn view ->
+        socket = view |> put_time(from) |> render_info({:tap, :play_pause}) |> frame_at(t)
+        socket.assigns.trace |> hd() |> elem(0)
+      end
+
+      # The phone keeps the 1.75 s its roll shows; the tablet shows more.
+      assert earliest.(ready_view()) >= t - 1_850
+      assert earliest.(tablet_view()) < t - 2_500
+    end
+
+    test "in landscape the track widens, strip controls take one line, and the short roll's status sits under the staff" do
+      at = fn params ->
+        view = tablet_view(params)
+        song = assigns(view).song
+        put_time(view, Song.bar_start(song, 22) + 300)
+      end
+
+      portrait = at.(@tablet)
+      landscape = at.(%{@tablet | screen: {1194.0, 834.0}})
+      track = fn v -> find(v, :canvas, id: "progress").props.width end
+
+      assert track.(landscape) > track.(portrait) + 300
+      assert find(portrait, :text, text: "Level 80")
+      assert find(landscape, :text, text: "Level") && find(landscape, :text, text: "80")
+      refute find(landscape, :text, text: "Level 80")
+
+      # The big lyric floats over the tall portrait roll only.
+      biggest = fn v ->
+        roll = Enum.max_by(for(%{type: :canvas} = c <- flatten(v), do: c), & &1.props.height)
+
+        roll.props.draw
+        |> List.flatten()
+        |> Enum.flat_map(&if(&1.op == :text, do: [&1.size], else: []))
+        |> Enum.max()
+      end
+
+      assert biggest.(portrait) >= 40
+      assert biggest.(landscape) < 40
+      assert_renderable(landscape)
+    end
+
+    test "a regular-width window too small for the tablet layout keeps the phone's, and scrubs" do
+      for screen <- [{600.0, 960.0}, {800.0, 600.0}] do
+        view = tablet_view(%{@tablet | screen: screen}) |> put_time(10_000.0)
+        assert assigns(view).layout == :phone
+        assert find(view, :canvas, id: "ctl_mix")
+
+        width = find(view, :canvas, id: "progress").props.width
+        assert width > 100
+
+        half =
+          view
+          |> render_info({:drag, :scrub, %{x: width / 2, phase: :began}})
+          |> render_info({:drag, :scrub, %{x: width / 2, phase: :ended}})
+
+        assert_in_delta assigns(half).t_ms, Song.duration_ms(assigns(view).song) / 2, 1
+        assert_renderable(view)
+      end
+    end
+
+    test "a resized window is laid out at its new size; a phone that stays a phone keeps its own" do
+      # Off device the window measures as the reference artboard, 390 × 844.
+      narrowed = change_size_class(tablet_view(), {:compact, :regular})
+      assert {assigns(narrowed).layout, assigns(narrowed).screen_w} == {:phone, 390.0}
+      assert find(narrowed, :canvas, id: "progress").props.width == 390 - 2 * 24 - 2 * 46
+
+      phone = change_size_class(ready_view(), {:compact, :compact})
+      assert {assigns(phone).layout, assigns(phone).screen_w} == {:phone, 411.0}
+    end
+
+    test "a regular-width window in the phone layout still follows its new size when it turns" do
+      view = tablet_view(%{@tablet | screen: {600.0, 960.0}})
+      assert assigns(view).layout == :phone
+
+      Application.put_env(:choir_coach, :screen, {960.0, 600.0})
+      on_exit(fn -> Application.delete_env(:choir_coach, :screen) end)
+      turned = render_info(view, {:mob_device, :orientation_changed, :landscape_left})
+
+      assert {assigns(turned).layout, assigns(turned).screen_w, assigns(turned).screen_h} ==
+               {:phone, 960.0, 600.0}
+
+      assert find(turned, :canvas, id: "progress").props.width == 960 - 2 * 24 - 2 * 46
+    end
+
+    test "the docked mix is saved as it changes: presets and toggles at once, sliders when the app goes to the background" do
+      view = tablet_view()
+
+      ear = render_info(view, {:tap, {:preset, :right_ear}})
+      assert Settings.mix(:bass).preset == :right_ear
+
+      off = render_info(ear, {:tap, {:toggle_row, :band}})
+      refute Enum.find(Settings.mix(:bass).rows, &(&1.id == :band)).on
+
+      quiet = render_info(off, {:change, {:level, :part_piano}, 30.0})
+      assert Enum.find(Settings.mix(:bass).rows, &(&1.id == :part_piano)).level != 30
+
+      render_info(quiet, {:mob_device, :did_enter_background})
+      assert Enum.find(Settings.mix(:bass).rows, &(&1.id == :part_piano)).level == 30
+    end
+  end
+
   # Open Audio, have it send `message`, close it and let the reload finish.
   defp through_audio(view, message) do
     opened = render_info(view, {:tap, :audio})

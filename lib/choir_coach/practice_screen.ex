@@ -14,7 +14,8 @@ defmodule ChoirCoach.PracticeScreen do
   ear map. Dragging the progress track scrubs: playback pauses while the
   finger moves and plays on from where it's let go.
   The header's switch (the singer's part | Melody) changes the part at the same song time;
-  the headphones icon opens `ChoirCoach.AudioScreen`.
+  the headphones icon opens `ChoirCoach.AudioScreen`. On a tablet "What you
+  hear" is docked below the transport instead (see "Tablet").
   """
 
   use Mob.Screen
@@ -30,7 +31,8 @@ defmodule ChoirCoach.PracticeScreen do
     PracticeView,
     Settings,
     Song,
-    Style
+    Style,
+    Window
   }
 
   @frame_ms 33
@@ -47,10 +49,35 @@ defmodule ChoirCoach.PracticeScreen do
   @headphone_kinds [:bluetooth, :bluetooth_sco, :usb, :wired_headset, :wired_headphones]
   # Outputs that play one channel: the phone's speakers and the call route.
   @mono_kinds [:speaker, :earpiece, :bluetooth_sco]
-  # Reference artboard, used where the device can't be asked (host tests).
-  @fallback_screen {390.0, 844.0}
   # Engine busy with nobody on loan to wait for: try again after this.
   @retry_ms 500
+  # The tablet layout (see "Tablet"), in dp.
+  @tablet_header_h 80
+  @tablet_transport_h 106
+  @tablet_gap 10
+  @tablet_clock_w 52
+  @dock_margin 12
+  @dock_padding 16
+  @dock_gap 12
+  # The dock's first line: "What you hear" (this wide) and the preset chips.
+  @dock_title_w 186
+  @chip_h 46
+  @chip_gap 8
+  # A roll shorter than this under the staff shows its status on one line.
+  @cluster_min_roll 300
+  # Strips are laid out for three mix rows (a part's), so the dock keeps its
+  # height when the melody (two rows) is switched to.
+  @strip_slots 3
+  @strip_gap 12
+  @strip_padding 14
+  @strip_stack_below 300
+  # What a strip's content takes on iOS, with a little to spare.
+  @strip_stacked_h 244
+  @strip_lines_h 152
+  # The tablet layout only where it fits: a progress track at least this
+  # wide, and a canvas at least this tall.
+  @min_progress_w 120
+  @min_canvas_h 320.0
 
   def mount(params, _session, socket) do
     # `parts`: the singer's part and the melody, each with its song and
@@ -58,7 +85,6 @@ defmodule ChoirCoach.PracticeScreen do
     parts = Map.fetch!(params, :parts)
     part = Map.get(params, :part, parts |> hd() |> elem(0))
     %{song: song, tracks: tracks} = Keyword.fetch!(parts, part)
-    {w, h} = Map.get_lazy(params, :screen, &screen_size/0)
     engine = Audio.engine()
     mix = Settings.mix(part) || Mix.new(part, tracks)
     first = hd(song.notes)
@@ -93,8 +119,6 @@ defmodule ChoirCoach.PracticeScreen do
         # What to listen to whenever a track is ready: the mic, or the track
         # itself in test mode.
         listen_source: :mic,
-        screen_w: w,
-        screen_h: h,
         playing: false,
         t_ms: 0.0,
         trace: [],
@@ -104,13 +128,38 @@ defmodule ChoirCoach.PracticeScreen do
         frames: 0,
         tick_timer: nil
       )
+      |> Window.assign(Window.size(params), &layout_of/1)
       |> refresh_output()
       |> attach()
 
+    # Rotations, and the app going to the background (`:app`), where a
+    # tablet saves its docked mix.
+    Window.follow([:app])
     {:ok, request_microphone(socket)}
   end
 
+  # Phones (and windows too small for it) keep the phone's design; a tablet
+  # (`layout_of/1`) docks the mixer below the roll.
   def render(assigns) do
+    case assigns.layout do
+      :tablet -> render_tablet(assigns)
+      :phone -> render_phone(assigns)
+    end
+  end
+
+  # The tablet layout for a regular-by-regular window (`Style.layout/1`)
+  # whose screen holds it: its transport keeps a usable progress track and
+  # its canvas the phone's minimum height, with the dock at its tallest (all
+  # chips showing).
+  defp layout_of(assigns) do
+    fits =
+      tablet_progress_width(assigns.screen_w) >= @min_progress_w and
+        tablet_canvas_height(assigns, all_chip_labels()) >= @min_canvas_h
+
+    if Style.layout(assigns[:size_class]) == :tablet and fits, do: :tablet, else: :phone
+  end
+
+  defp render_phone(assigns) do
     sa = Map.get(assigns, :safe_area, %{top: 0.0, bottom: 0.0})
     progress_w = progress_width(assigns)
     # Restart, −1 bar, +1 bar, loop and Mix share the row with play, with
@@ -229,6 +278,487 @@ defmodule ChoirCoach.PracticeScreen do
     """
   end
 
+  # ── Tablet ───────────────────────────────────────────────────────────────
+  #
+  # One header row (title and facts; the part switch and the headphones on
+  # the right), the staff and roll across the width at the phone's time scale
+  # (more of the song shows, not the same seconds stretched), one transport
+  # row with the progress track inline, and "What you hear" docked below:
+  # the presets and one channel strip per mix row, always visible. No ear
+  # map: the strips show every level and balance, and the roll needs the
+  # height (landscape especially). Chrome is `Style.ui/2`-sized.
+
+  defp render_tablet(assigns) do
+    # Once a frame: it reads the saved "My mix".
+    chips = chip_specs(assigns)
+    m = tablet_metrics(assigns, chips)
+
+    frame = %{
+      song: assigns.song,
+      t_ms: assigns.t_ms,
+      width: assigns.screen_w,
+      time_width: time_width(assigns),
+      status_band: m.status_band,
+      height: m.canvas_h,
+      semitone: m.semitone,
+      center_midi: assigns.center_midi,
+      trace: assigns.trace,
+      feedback: assigns.feedback,
+      now_ms: round(assigns.t_ms)
+    }
+
+    ~MOB"""
+    <Column background={Style.bg()} fill_height={true}>
+      {tablet_header(assigns)}
+      <Canvas width={frame.width} height={frame.height} draw={PracticeView.ops(frame)} />
+      {tablet_transport(assigns, m)}
+      {mix_dock(assigns, chips, m)}
+    </Column>
+    """
+  end
+
+  # Heights and widths of the tablet layout (dp). The header, transport and
+  # dock have fixed heights, so the canvas takes exactly the rest.
+  defp tablet_metrics(assigns, chips) do
+    {stacked, strip_h} = strip_form(assigns.screen_w)
+    labels = for {label, _tap, _selected} <- chips, do: label
+    canvas_h = tablet_canvas_height(assigns, labels)
+
+    # A short roll (landscape) can't hold the big lyric and note clear of
+    # the notes and trace: its status goes on one line under the staff.
+    status_band = canvas_h - PracticeView.staff_height() < @cluster_min_roll
+
+    roll_top =
+      if status_band, do: PracticeView.compact_height(), else: PracticeView.staff_height()
+
+    %{
+      canvas_h: canvas_h,
+      status_band: status_band,
+      # About nine semitones over the roll, between 28 and 40 dp each.
+      semitone: ((canvas_h - roll_top) / 9) |> min(40.0) |> max(28.0),
+      ctl: Style.ui(ControlsView.size(), :tablet),
+      play: Style.ui(ControlsView.play_size(), :tablet),
+      progress_w: tablet_progress_width(assigns.screen_w),
+      transport_h: @tablet_transport_h,
+      stacked: stacked,
+      strip_h: strip_h,
+      strip_gap: @strip_gap,
+      strip_padding: @strip_padding,
+      dock_margin: @dock_margin,
+      dock_padding: @dock_padding,
+      dock_gap: @dock_gap,
+      chips_h: chips_height(assigns.screen_w, labels),
+      chip_h: @chip_h,
+      chip_gap: @chip_gap,
+      title_w: @dock_title_w
+    }
+  end
+
+  # What the header, transport and dock (with chips `labels`) leave the
+  # canvas.
+  defp tablet_canvas_height(assigns, labels) do
+    sa = Map.get(assigns, :safe_area, %{top: 0.0, bottom: 0.0})
+    {_stacked, strip_h} = strip_form(assigns.screen_w)
+    dock_h = 2 * @dock_padding + chips_height(assigns.screen_w, labels) + @dock_gap + strip_h
+
+    assigns.screen_h - sa.top - sa.bottom - @tablet_header_h - @tablet_transport_h - dock_h -
+      @dock_margin
+  end
+
+  # Narrow strips (portrait) stack each control under its name; wide ones
+  # (landscape) give each control one line, which keeps the dock short.
+  # {stacked, strip height}.
+  defp strip_form(screen_w) do
+    strip_w = (dock_inner_width(screen_w) - (@strip_slots - 1) * @strip_gap) / @strip_slots
+
+    if strip_w - 2 * @strip_padding < @strip_stack_below,
+      do: {true, @strip_stacked_h},
+      else: {false, @strip_lines_h}
+  end
+
+  defp dock_inner_width(screen_w), do: screen_w - 2 * (@dock_margin + @dock_padding)
+
+  # "What you hear" and the preset chips (`labels`) wrap onto a second line
+  # when they don't fit one (portrait with Custom and Save showing).
+  defp chips_height(screen_w, labels) do
+    runs =
+      chip_runs([@dock_title_w | Enum.map(labels, &chip_width/1)], dock_inner_width(screen_w))
+
+    runs * @chip_h + (runs - 1) * @chip_gap
+  end
+
+  # Every chip that can show at once: Custom, Save and all the presets.
+  defp all_chip_labels, do: ["Custom", "Save" | Enum.map(Mix.presets(nil, :saved), & &1.label)]
+
+  # How many lines items `widths` wide take, `@chip_gap` apart, in `width`.
+  defp chip_runs(widths, width) do
+    widths
+    |> Enum.reduce({1, nil}, fn
+      w, {runs, nil} -> {runs, w}
+      w, {runs, used} when used + @chip_gap + w <= width -> {runs, used + @chip_gap + w}
+      w, {runs, _used} -> {runs + 1, w}
+    end)
+    |> elem(0)
+  end
+
+  # A chip's width, generously estimated from its label (bold system font
+  # averages about half an em a character).
+  defp chip_width(label),
+    do: String.length(label) * Style.type(:status, :tablet) * 0.55 + 2 * Style.ui(16, :tablet)
+
+  defp tablet_header(assigns) do
+    back_tap = {self(), :back}
+    audio_tap = {self(), :audio}
+
+    ~MOB"""
+    <Row height={80} align={:center} padding_left={8} padding_right={20} gap={12}>
+      <Text
+        id="nav_back"
+        text="‹"
+        on_tap={back_tap}
+        on_press_out={held()}
+        text_size={38}
+        text_color={Style.text_secondary()}
+        padding_left={8}
+        padding_right={6}
+      />
+      <Column weight={1} gap={2}>
+        <Text
+          text={assigns.song.title}
+          text_size={Style.ui(20, :tablet)}
+          text_color={Style.text_primary()}
+          font_weight="bold"
+          max_lines={1}
+        />
+        <Text
+          text={subtitle(assigns)}
+          text_size={Style.type(:subtitle, :tablet)}
+          text_color={if(assigns.offer_delay, do: Style.accent(), else: Style.text_tertiary())}
+          font_weight={if(assigns.offer_delay, do: "bold", else: "normal")}
+          max_lines={1}
+          on_tap={if(assigns.offer_delay, do: audio_tap)}
+          on_press_out={if(assigns.offer_delay, do: held())}
+        />
+      </Column>
+      {part_switch(assigns, :tablet)}
+      <Canvas
+        id="audio_icon"
+        width={44}
+        height={44}
+        draw={ControlsView.headphones(44)}
+        on_tap={audio_tap}
+        on_press_out={held()}
+      />
+    </Row>
+    """
+  end
+
+  # Restart, −1 bar, play, +1 bar, loop, then the clocks around the progress
+  # track, which takes the rest of the row.
+  defp tablet_transport(assigns, m) do
+    s = Style.ui_scale(:tablet)
+    gap = @tablet_gap
+    clock_w = @tablet_clock_w
+    scrub = {self(), :scrub, [throttle: 50]}
+
+    ~MOB"""
+    <Row height={m.transport_h} align={:center} padding_left={24} padding_right={24}>
+      <Canvas
+        id="ctl_restart"
+        width={m.ctl}
+        height={m.ctl}
+        draw={ControlsView.control(:restart, "Restart", false, m.ctl, s)}
+        on_tap={{self(), :restart}}
+        on_press_out={held()}
+      />
+      <Spacer size={gap} />
+      <Canvas
+        id="ctl_back_bar"
+        width={m.ctl}
+        height={m.ctl}
+        draw={ControlsView.control(:back_bar, "−1 bar", false, m.ctl, s)}
+        on_tap={{self(), :back_bar}}
+        on_press_out={held()}
+      />
+      <Spacer size={gap} />
+      <Canvas
+        id="ctl_play"
+        width={m.play}
+        height={m.play}
+        draw={ControlsView.play_button(shows_pause?(assigns), m.play / ControlsView.play_size())}
+        on_tap={{self(), :play_pause}}
+        on_press_out={held()}
+      />
+      <Spacer size={gap} />
+      <Canvas
+        id="ctl_forward_bar"
+        width={m.ctl}
+        height={m.ctl}
+        draw={ControlsView.control(:forward_bar, "+1 bar", false, m.ctl, s)}
+        on_tap={{self(), :forward_bar}}
+        on_press_out={held()}
+      />
+      <Spacer size={gap} />
+      <Canvas
+        id="ctl_loop"
+        width={m.ctl}
+        height={m.ctl}
+        draw={ControlsView.control(:loop, loop_caption(assigns.song), assigns.loop, m.ctl, s)}
+        on_tap={{self(), :loop}}
+        on_press_out={held()}
+      />
+      <Spacer size={16} />
+      <Text
+        text={clock(assigns.t_ms)}
+        text_size={Style.type(:subtitle, :tablet)}
+        text_color={Style.text_tertiary()}
+        text_align="right"
+        width={clock_w}
+      />
+      <Spacer size={8} />
+      <Canvas
+        id="progress"
+        width={m.progress_w}
+        height={ControlsView.progress_height()}
+        draw={ControlsView.progress(m.progress_w, progress_fraction(assigns), loop_fraction(assigns))}
+        on_drag={scrub}
+      />
+      <Spacer size={8} />
+      <Text
+        text={clock(Song.duration_ms(assigns.song))}
+        text_size={Style.type(:subtitle, :tablet)}
+        text_color={Style.text_tertiary()}
+        width={clock_w}
+      />
+    </Row>
+    """
+  end
+
+  # "What you hear", always open: the presets, then a strip per mix row (or,
+  # for a whole recording, what it plays). Fixed heights sit on unpadded
+  # nodes only: iOS adds padding outside a node's height.
+  defp mix_dock(assigns, specs, m) do
+    chips = for spec <- specs, do: chip(spec, :tablet)
+
+    ~MOB"""
+    <Column padding_left={m.dock_margin} padding_right={m.dock_margin} padding_bottom={m.dock_margin}>
+      <Box background={Style.surface()} corner_radius={24}>
+        <Column padding={m.dock_padding} gap={m.dock_gap}>
+          <Column height={m.chips_h}>
+            <Wrap spacing={m.chip_gap} run_spacing={m.chip_gap}>
+              <Row width={m.title_w} height={m.chip_h} align={:center}>
+                <Text
+                  text="What you hear"
+                  text_size={Style.ui(22, :tablet)}
+                  text_color={Style.text_primary()}
+                  font_weight="bold"
+                  max_lines={1}
+                />
+              </Row>
+              {chips}
+            </Wrap>
+          </Column>
+          {dock_body(assigns, assigns.mix, m)}
+        </Column>
+      </Box>
+    </Column>
+    """
+  end
+
+  defp dock_body(_assigns, %{recording: rec}, m) when rec != nil do
+    ~MOB"""
+    <Column height={m.strip_h}>
+      <Text
+        text={"#{recording_name(rec)} plays the recording as it is. Pick Rehearsal or Me in right ear to set each source."}
+        text_size={Style.type(:status, :tablet)}
+        text_color={Style.text_tertiary()}
+      />
+    </Column>
+    """
+  end
+
+  defp dock_body(assigns, mix, m) do
+    strips = for row <- mix.rows, do: strip(assigns, row, m)
+
+    ~MOB"""
+    <Row height={m.strip_h} gap={m.strip_gap}>
+      {strips}
+    </Row>
+    """
+  end
+
+  # One mix row as a channel strip: its swatch (tap: on / off), name and
+  # detail, then its level and balance.
+  defp strip(assigns, row, m) do
+    toggle = {self(), {:toggle_row, row.id}}
+    level = {self(), {:level, row.id}}
+    balance = {self(), {:balance, row.id}}
+    label_color = if row.on, do: Style.text_primary(), else: Style.text_tertiary()
+    color = Style.swatch(assigns.part)
+
+    swatch = ~MOB"""
+    <Canvas
+      id={"row_#{row.id}"}
+      width={44}
+      height={44}
+      draw={MixView.swatch(assigns.part, row, 44)}
+      on_tap={toggle}
+      on_press_out={held()}
+    />
+    """
+
+    controls =
+      if m.stacked do
+        ~MOB"""
+        <Column align={:center} gap={4}>
+          {swatch}
+          <Text
+            text={row.label}
+            text_size={Style.ui(17, :tablet)}
+            text_color={label_color}
+            font_weight="bold"
+            max_lines={1}
+          />
+          <Text
+            text={row.detail}
+            text_size={Style.type(:subtitle, :tablet)}
+            text_color={Style.text_tertiary()}
+            max_lines={1}
+          />
+          <Slider
+            value={row.level * 1.0}
+            min={0.0}
+            max={100.0}
+            on_change={level}
+            color={color}
+            fill_width={true}
+          />
+          {strip_value("Level #{row.level}")}
+          {strip_balance(assigns, row, balance, color, :stacked)}
+        </Column>
+        """
+      else
+        ~MOB"""
+        <Column gap={6}>
+          <Row align={:center} gap={12}>
+            {swatch}
+            <Column weight={1}>
+              <Text
+                text={row.label}
+                text_size={Style.ui(17, :tablet)}
+                text_color={label_color}
+                font_weight="bold"
+                max_lines={1}
+              />
+              <Text
+                text={row.detail}
+                text_size={Style.type(:subtitle, :tablet)}
+                text_color={Style.text_tertiary()}
+                max_lines={1}
+              />
+            </Column>
+          </Row>
+          {strip_line("Level", "#{row.level}", row.level, {0.0, 100.0}, level, color)}
+          {strip_balance(assigns, row, balance, color, :line)}
+        </Column>
+        """
+      end
+
+    ~MOB"""
+    <Box background={Style.surface_raised()} corner_radius={18} padding={m.strip_padding} weight={1}>
+      {controls}
+    </Box>
+    """
+  end
+
+  defp strip_value(text) do
+    ~MOB"""
+    <Text
+      text={text}
+      text_size={Style.type(:status, :tablet)}
+      text_color={Style.text_primary()}
+      font_weight="bold"
+    />
+    """
+  end
+
+  defp strip_line(label, value, current, {min, max}, change, color) do
+    ~MOB"""
+    <Row align={:center} gap={10}>
+      {strip_label(label)}
+      <Slider value={current * 1.0} min={min} max={max} on_change={change} color={color} weight={1} />
+      <Text
+        text={value}
+        text_size={Style.type(:status, :tablet)}
+        text_color={Style.text_primary()}
+        font_weight="bold"
+        width={60}
+      />
+    </Row>
+    """
+  end
+
+  # A row's balance as L 45 / C / R 70 with its slider; on a mono output
+  # (the speaker, a call route) balance has no effect, so no slider: it says
+  # so, and the setting waits for headphones.
+  defp strip_balance(%{mono: true}, _row, _change, _color, form) do
+    {label, note} =
+      case form do
+        :stacked -> {nil, "Balance: none in mono"}
+        :line -> {"Balance", "None in mono"}
+      end
+
+    ~MOB"""
+    <Row align={:center} gap={10} height={36}>
+      {if label, do: strip_label(label), else: []}
+      <Text
+        text={note}
+        text_size={Style.type(:status, :tablet)}
+        text_color={Style.text_tertiary()}
+        max_lines={1}
+      />
+    </Row>
+    """
+  end
+
+  defp strip_balance(_assigns, row, change, color, :stacked) do
+    ~MOB"""
+    <Column gap={4}>
+      <Slider
+        value={row.balance * 1.0}
+        min={-100.0}
+        max={100.0}
+        on_change={change}
+        color={color}
+        fill_width={true}
+      />
+      {strip_value("Balance " <> balance_label(row.balance, false))}
+    </Column>
+    """
+  end
+
+  defp strip_balance(_assigns, row, change, color, :line) do
+    strip_line(
+      "Balance",
+      balance_label(row.balance, false),
+      row.balance,
+      {-100.0, 100.0},
+      change,
+      color
+    )
+  end
+
+  defp strip_label(label) do
+    ~MOB"""
+    <Text
+      text={label}
+      text_size={Style.type(:status, :tablet)}
+      text_color={Style.text_secondary()}
+      width={76}
+    />
+    """
+  end
+
   # Every tap target here also declares `on_press_out` (this, ignored). While
   # a song plays the screen re-renders ~30 times a second, and Mob's Android
   # bridge drops a plain tap whose handle is from an earlier render, so most
@@ -300,7 +830,7 @@ defmodule ChoirCoach.PracticeScreen do
           on_tap={if(assigns.offer_delay, do: audio_tap)}
           on_press_out={if(assigns.offer_delay, do: held())}
         />
-        {part_switch(assigns)}
+        {part_switch(assigns, :phone)}
       </Row>
     </Column>
     """
@@ -308,7 +838,7 @@ defmodule ChoirCoach.PracticeScreen do
 
   # The singer's part | Melody as a segmented control: both options visible,
   # the current one filled with the UI accent.
-  defp part_switch(assigns) do
+  defp part_switch(assigns, layout) do
     segments =
       for {part, _} <- assigns.parts do
         selected = part == assigns.part
@@ -318,18 +848,18 @@ defmodule ChoirCoach.PracticeScreen do
         <Box
           id={"part_#{part}"}
           background={if(selected, do: Style.accent(), else: 0x00000000)}
-          corner_radius={17}
-          padding_left={14}
-          padding_right={14}
-          padding_top={7}
-          padding_bottom={7}
+          corner_radius={Style.ui(17, layout)}
+          padding_left={Style.ui(14, layout)}
+          padding_right={Style.ui(14, layout)}
+          padding_top={Style.ui(7, layout)}
+          padding_bottom={Style.ui(7, layout)}
           fill_width={false}
           on_tap={tap}
           on_press_out={held()}
         >
           <Text
             text={part_name(part)}
-            text_size={Style.type(:status)}
+            text_size={Style.type(:status, layout)}
             text_color={if(selected, do: Style.bg(), else: Style.text_primary())}
             font_weight="bold"
           />
@@ -338,7 +868,12 @@ defmodule ChoirCoach.PracticeScreen do
       end
 
     ~MOB"""
-    <Box background={0x24FFFFFF} corner_radius={20} padding={3} fill_width={false}>
+    <Box
+      background={0x24FFFFFF}
+      corner_radius={Style.ui(20, layout)}
+      padding={Style.ui(3, layout)}
+      fill_width={false}
+    >
       <Row>
         {segments}
       </Row>
@@ -424,43 +959,54 @@ defmodule ChoirCoach.PracticeScreen do
     """
   end
 
+  # The phone's chips scroll sideways under the sheet's title; a tablet's
+  # wrap after "What you hear" (`mix_dock/2`).
   defp preset_chips(assigns) do
-    mix = assigns.mix
-    presets = Mix.presets(mix, Settings.saved_mix(assigns.part))
-
-    custom =
-      if mix.preset == :custom,
-        do: [chip("Custom", nil, true), chip("Save", {self(), :save_mix}, false)],
-        else: []
-
-    chips = for p <- presets, do: chip(p.label, {self(), {:preset, p.id}}, mix.preset == p.id)
+    chips = for spec <- chip_specs(assigns), do: chip(spec, :phone)
 
     ~MOB"""
     <Scroll axis="horizontal">
       <Row gap={8}>
-        {custom ++ chips}
+        {chips}
       </Row>
     </Scroll>
     """
   end
 
-  defp chip(label, tap, selected) do
+  # Each chip as {label, tap, selected}: Custom (no tap) and Save while the
+  # mix is custom, then the presets.
+  defp chip_specs(assigns) do
+    mix = assigns.mix
+
+    custom =
+      if mix.preset == :custom,
+        do: [{"Custom", nil, true}, {"Save", {self(), :save_mix}, false}],
+        else: []
+
+    presets =
+      for p <- Mix.presets(mix, Settings.saved_mix(assigns.part)),
+          do: {p.label, {self(), {:preset, p.id}}, mix.preset == p.id}
+
+    custom ++ presets
+  end
+
+  defp chip({label, tap, selected}, layout) do
     ~MOB"""
     <Box
       id={chip_id(tap)}
       background={if(selected, do: 0x40FFFFFF, else: 0x14FFFFFF)}
-      corner_radius={20}
-      padding_left={16}
-      padding_right={16}
-      padding_top={10}
-      padding_bottom={10}
+      corner_radius={Style.ui(20, layout)}
+      padding_left={Style.ui(16, layout)}
+      padding_right={Style.ui(16, layout)}
+      padding_top={Style.ui(10, layout)}
+      padding_bottom={Style.ui(10, layout)}
       fill_width={false}
       on_tap={tap}
       on_press_out={if(tap, do: held())}
     >
       <Text
         text={label}
-        text_size={Style.type(:status)}
+        text_size={Style.type(:status, layout)}
         text_color={if(selected, do: Style.text_primary(), else: Style.text_secondary())}
         font_weight="bold"
       />
@@ -642,6 +1188,20 @@ defmodule ChoirCoach.PracticeScreen do
 
   # ── Events ───────────────────────────────────────────────────────────────
 
+  # The window turned or was resized (`ChoirCoach.Window.refresh/2`: a
+  # screen that was and stays phone-laid-out keeps its size, as it always
+  # has). Rotating a tablet changes no size class, hence both messages.
+  def handle_info({:mob_device, :orientation_changed, _orientation}, socket),
+    do: {:noreply, Window.refresh(socket, &layout_of/1)}
+
+  def handle_info({:mob_size_class_changed, _size_class}, socket),
+    do: {:noreply, Window.refresh(socket, &layout_of/1)}
+
+  # The app went to the background, where the OS may end it unannounced: a
+  # tablet saves its docked mix (a phone's is saved as the sheet closes).
+  def handle_info({:mob_device, :did_enter_background}, socket),
+    do: {:noreply, persist_docked_mix(socket)}
+
   # While the Audio screen has the engine this screen makes no engine call:
   # its device and delay choices are kept for the engine's return, and
   # engine events and frame ticks are dropped.
@@ -737,16 +1297,20 @@ defmodule ChoirCoach.PracticeScreen do
 
   def handle_info({:tap, {:preset, id}}, socket) do
     a = socket.assigns
-    {:noreply, change_mix(socket, Mix.apply_preset(a.mix, id, Settings.saved_mix(a.part)))}
+    mix = Mix.apply_preset(a.mix, id, Settings.saved_mix(a.part))
+    {:noreply, socket |> change_mix(mix) |> persist_docked_mix()}
   end
 
   def handle_info({:tap, :save_mix}, socket) do
     a = socket.assigns
-    {:noreply, change_mix(socket, Settings.put_saved_mix(a.part, a.mix))}
+
+    {:noreply,
+     socket |> change_mix(Settings.put_saved_mix(a.part, a.mix)) |> persist_docked_mix()}
   end
 
   def handle_info({:tap, {:toggle_row, id}}, socket) do
-    {:noreply, change_mix(socket, Mix.toggle_row(socket.assigns.mix, id))}
+    {:noreply,
+     socket |> change_mix(Mix.toggle_row(socket.assigns.mix, id)) |> persist_docked_mix()}
   end
 
   def handle_info({:tap, {:open_row, id}}, socket) do
@@ -1016,6 +1580,16 @@ defmodule ChoirCoach.PracticeScreen do
   # every slider step.
   defp persist_mix(socket), do: Settings.put_mix(socket.assigns.part, socket.assigns.mix)
 
+  # A tablet's mix is always showing, with no sheet to close: it is saved on
+  # each preset, toggle or save, and (for its sliders) when the app goes to
+  # the background, where the OS may end it without `terminate/2`.
+  defp persist_docked_mix(%{assigns: %{layout: :tablet}} = socket) do
+    persist_mix(socket)
+    socket
+  end
+
+  defp persist_docked_mix(socket), do: socket
+
   # Which output plays (`Settings.active_output/3`): it sets mono (the phone
   # speaker) and which headphones' delay applies.
   defp refresh_output(socket) do
@@ -1167,7 +1741,7 @@ defmodule ChoirCoach.PracticeScreen do
   defp step(socket, t) do
     a = socket.assigns
     {readings, audio} = a.engine.readings(a.audio)
-    keep_from = t - Style.past_seconds() * 1000 - 100
+    keep_from = t - max(Style.past_seconds() * 1000, PracticeView.past_ms(time_frame(a))) - 100
 
     trace =
       Enum.drop_while(a.trace ++ align_readings(a.song, readings), fn {ts, _m, _c} ->
@@ -1274,8 +1848,25 @@ defmodule ChoirCoach.PracticeScreen do
   defp progress_fraction(a), do: a.t_ms / Song.duration_ms(a.song)
 
   # The track spans the row between the two clock labels (~36 dp each and
-  # their gaps) inside the 24 dp margins.
-  defp progress_width(assigns), do: assigns.screen_w - 2 * 24 - 2 * 46
+  # their gaps) inside the 24 dp margins; on a tablet, what the transport
+  # controls leave of the row (`layout_of/1` keeps it usable).
+  defp progress_width(%{layout: :phone} = assigns), do: assigns.screen_w - 2 * 24 - 2 * 46
+  defp progress_width(%{layout: :tablet} = assigns), do: tablet_progress_width(assigns.screen_w)
+
+  defp tablet_progress_width(screen_w) do
+    controls =
+      4 * Style.ui(ControlsView.size(), :tablet) + Style.ui(ControlsView.play_size(), :tablet) +
+        4 * @tablet_gap
+
+    screen_w - 2 * 24 - controls - 16 - 2 * (@tablet_clock_w + 8)
+  end
+
+  # The width the roll's time scale is taken from: the canvas's on a phone,
+  # the reference artboard's on a tablet (it shows more seconds instead).
+  defp time_width(%{layout: :phone} = assigns), do: assigns.screen_w
+  defp time_width(%{layout: :tablet}), do: Style.reference_width()
+
+  defp time_frame(a), do: %{width: a.screen_w, time_width: time_width(a), song: a.song}
 
   # Song time under a finger `x` dp along the progress track.
   defp scrub_time(a, x) do
@@ -1300,14 +1891,5 @@ defmodule ChoirCoach.PracticeScreen do
   defp keep_awake(on?) do
     if device_calls?(), do: Mob.Device.keep_awake(on?)
     :ok
-  end
-
-  defp screen_size do
-    if device_calls?() do
-      %{width: w, height: h} = :mob_nif.screen_info()
-      {w * 1.0, h * 1.0}
-    else
-      @fallback_screen
-    end
   end
 end

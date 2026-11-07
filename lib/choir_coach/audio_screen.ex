@@ -31,7 +31,7 @@ defmodule ChoirCoach.AudioScreen do
 
   import Mob.Canvas
 
-  alias ChoirCoach.{Audio, Calibration, Settings, Style}
+  alias ChoirCoach.{Audio, Calibration, Settings, Style, Window}
 
   @tick_ms 100
   # Device list refresh (headphones plugged in or out while the screen is open).
@@ -65,8 +65,6 @@ defmodule ChoirCoach.AudioScreen do
     {:wired_headphones, "Wired headphones", "Not plugged in"}
   ]
 
-  @fallback_width 390.0
-
   def mount(params, _session, socket) do
     engine = Audio.engine()
     :ok = Audio.Lease.borrow(self())
@@ -79,7 +77,6 @@ defmodule ChoirCoach.AudioScreen do
         engine: engine,
         audio: audio,
         practice: Map.get(params, :practice),
-        screen_w: screen_width(params),
         devices: devices,
         output:
           Map.get(params, :output) || Settings.output_pref(devices) ||
@@ -98,6 +95,7 @@ defmodule ChoirCoach.AudioScreen do
       |> load_delay()
       |> request_microphone()
       |> schedule_tick()
+      |> Window.assign(Window.size(params), &layout_of/1)
       |> subscribe_app()
 
     {:ok, socket}
@@ -105,8 +103,43 @@ defmodule ChoirCoach.AudioScreen do
 
   # ── Render ───────────────────────────────────────────────────────────────
 
+  # On a tablet (`Style.layout/1`) the settings are centred, no wider than
+  # `Style.content_width/1`.
   def render(assigns) do
     back = {self(), :back}
+
+    sections = [
+      section_label("Play through"),
+      card(output_rows(assigns)),
+      section_label("Listen with"),
+      card(input_rows(assigns)),
+      mic_meter(assigns),
+      section_label("Timing"),
+      timing_card(assigns)
+    ]
+
+    body =
+      case assigns.layout do
+        :phone ->
+          ~MOB"""
+          <Column padding_left={20} padding_right={20} padding_bottom={32} gap={12}>
+            {sections}
+          </Column>
+          """
+
+        # Centred between flexible spacers: a column's `align` doesn't move a
+        # fixed-width child on iOS.
+        :tablet ->
+          ~MOB"""
+          <Row>
+            <Spacer />
+            <Column width={Style.content_width(assigns.screen_w)} padding_bottom={32} gap={12}>
+              {sections}
+            </Column>
+            <Spacer />
+          </Row>
+          """
+      end
 
     ~MOB"""
     <Column background={Style.bg()} fill_height={true}>
@@ -115,15 +148,7 @@ defmodule ChoirCoach.AudioScreen do
         <Text text="Audio" text_size={24} text_color={Style.text_primary()} font_weight="bold" />
       </Row>
       <Scroll weight={1}>
-        <Column padding_left={20} padding_right={20} padding_bottom={32} gap={12}>
-          {section_label("Play through")}
-          {card(output_rows(assigns))}
-          {section_label("Listen with")}
-          {card(input_rows(assigns))}
-          {mic_meter(assigns)}
-          {section_label("Timing")}
-          {timing_card(assigns)}
-        </Column>
+        {body}
       </Scroll>
     </Column>
     """
@@ -282,8 +307,15 @@ defmodule ChoirCoach.AudioScreen do
   end
 
   defp mic_meter(assigns) do
-    # Label 76 + meter + status 96, two 12 dp gaps, inside the 20 dp margins.
-    width = max(assigns.screen_w - 40 - 76 - 96 - 24, 80)
+    # Label 76 + meter + status 96, two 12 dp gaps, inside the 20 dp margins
+    # (on a tablet, the `Style.content_width/1` column).
+    row_w =
+      case assigns.layout do
+        :phone -> assigns.screen_w - 40
+        :tablet -> Style.content_width(assigns.screen_w)
+      end
+
+    width = max(row_w - 76 - 96 - 24, 80)
 
     ~MOB"""
     <Row align={:center} padding_top={8} gap={12}>
@@ -583,6 +615,13 @@ defmodule ChoirCoach.AudioScreen do
   def handle_info({:mob_device, :will_enter_foreground}, socket) do
     {:noreply, socket |> Mob.Socket.assign(:background, false) |> listen() |> schedule_tick()}
   end
+
+  # The window turned or was resized: a tablet layout takes the new width.
+  def handle_info({:mob_device, :orientation_changed, _orientation}, socket),
+    do: {:noreply, Window.refresh(socket, &layout_of/1)}
+
+  def handle_info({:mob_size_class_changed, _size_class}, socket),
+    do: {:noreply, Window.refresh(socket, &layout_of/1)}
 
   # A tick already queued when the app went to the background.
   def handle_info(:tick, %{assigns: %{background: true}} = socket), do: {:noreply, socket}
@@ -911,21 +950,13 @@ defmodule ChoirCoach.AudioScreen do
 
   defp device_calls?, do: Application.get_env(:choir_coach, :device_calls, true)
 
-  # Background / foreground events (`{:mob_device, …}`).
+  # Background / foreground events and rotations (`{:mob_device, …}`).
   defp subscribe_app(socket) do
-    if device_calls?(), do: Mob.Device.subscribe(:app)
+    Window.follow([:app])
     Mob.Socket.assign(socket, :background, false)
   end
 
-  defp screen_width(params) do
-    case Map.get(params, :screen) do
-      {w, _h} ->
-        w
-
-      nil ->
-        if device_calls?(), do: :mob_nif.screen_info().width * 1.0, else: @fallback_width
-    end
-  end
+  defp layout_of(assigns), do: Style.layout(assigns[:size_class])
 
   defp chevron_icon do
     [

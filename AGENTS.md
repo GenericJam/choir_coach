@@ -150,9 +150,40 @@ its tokens live in `ChoirCoach.Style`.
   Done button, the grab bar or the Mix toggle. A mix
   change re-sets gains, or reloads in place when it needs other files. The
   part's mix is saved when the sheet closes, the part changes or the song
-  is left. New headphones get one offer to set their delay. Test mode
+  is left; on a tablet (no sheet) also on each preset, toggle or Save, and
+  when the app goes to the background (`{:mob_device, :did_enter_background}`,
+  for the sliders). New headphones get one offer to set their delay. Test mode
   (`{:listen, :playback}`) analyses the guide lane (the part on piano, or
-  the voices).
+  the voices). On a tablet (`Style.layout/1`: `assigns.size_class` regular
+  both ways, so an iPad full screen in either orientation; a phone, or an
+  iPad in Slide Over / narrow Split View, keeps the phone layout), when the
+  screen also holds it (a progress track of 120 dp or more and a canvas of
+  320 with every chip showing; else the phone layout: e.g. 600 × 960 or
+  800 × 600, or an iPad mini in landscape) it is one
+  header row (title and facts; part switch and headphones on the right), the
+  roll at the reference artboard's time scale (`time_width`: more seconds,
+  not stretched; the trace is kept for the longer past), one transport row
+  with the progress track inline (no Mix button), and "What you hear" docked
+  below: the title and preset chips in a `<Wrap>` (a second line when they
+  don't fit, e.g. portrait with Custom and Save; its height is reserved from
+  an estimate of the chips' widths), then one channel strip per mix row
+  (swatch toggles; level slider; balance slider with L 45 / C / R 70, or on
+  a mono output "None in mono" and no slider), no ear map. Strips stack their
+  controls in portrait and give each a line in landscape; the header,
+  transport and dock have fixed heights (on unpadded nodes: iOS adds padding
+  outside a height) and the canvas takes the rest. A roll under 300 dp
+  (landscape) puts its status on one line under the staff
+  (`PracticeView` `status_band`) instead of the big lyric and note. Chrome
+  is `Style.ui/2`-sized (1.2×). The song list and Audio screen centre their
+  content at `Style.content_width/1` (640, or the window less 20 dp gutters)
+  on a tablet. `ChoirCoach.Window` keeps each screen's `screen_w`,
+  `screen_h` and `layout`: it reads them at mount and again on a rotation
+  (`{:mob_device, :orientation_changed, _}`) or a size-class change
+  (`{:mob_size_class_changed, _}`: Split View, Stage Manager, Android
+  multi-window), unless the size class was and still is a phone's (a phone
+  keeps its mount size, as before; any regular-by-regular window, tablet- or
+  phone-laid-out, takes the new size). Mob reports the screen's size, not the
+  window's, so a Split View window is measured as the whole screen.
 - `ChoirCoach.AudioScreen` — output and microphone choice, the mic meter,
   the headphone delay for the output in use (−/+), and "Set by singing
   along" (`ChoirCoach.Calibration`: 8 clicks at 90 bpm, `priv/sounds/clicks_90.mp3`

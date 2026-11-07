@@ -10,8 +10,10 @@ defmodule ChoirCoach.PracticeView do
   chevrons, edge fades and cluster, bottom scrim.
 
   Time runs right to left under a fixed playhead at 37.5 % of the width,
-  showing 1.75 s of the past and 2.9 s of the future. Pitch runs bottom to
-  top at a fixed dp per semitone around `center_midi`.
+  showing 1.75 s of the past and 2.9 s of the future at the width the time
+  scale is taken from (`time_width`, the canvas's own unless given: a tablet
+  passes the reference artboard's, so its wider roll shows more seconds).
+  Pitch runs bottom to top at a fixed dp per semitone around `center_midi`.
 
   Mob's canvas has no gradients, so radial glows and edge fades are stacks
   of translucent shapes.
@@ -24,15 +26,17 @@ defmodule ChoirCoach.PracticeView do
   @type sample :: {integer() | float(), float() | nil, float()}
 
   @type frame :: %{
-          song: Song.t(),
-          t_ms: float(),
-          width: float(),
-          height: float(),
-          semitone: float(),
-          center_midi: float(),
-          trace: [sample()],
-          feedback: Feedback.t(),
-          now_ms: integer()
+          required(:song) => Song.t(),
+          required(:t_ms) => float(),
+          required(:width) => float(),
+          optional(:time_width) => float(),
+          optional(:status_band) => boolean(),
+          required(:height) => float(),
+          required(:semitone) => float(),
+          required(:center_midi) => float(),
+          required(:trace) => [sample()],
+          required(:feedback) => Feedback.t(),
+          required(:now_ms) => integer()
         }
 
   # Staff strip geometry inside the canvas (dp).
@@ -41,6 +45,8 @@ defmodule ChoirCoach.PracticeView do
   # it would run into its neighbour on the first.
   @staff_lyric_rows [72.0, 96.0]
   @strip_height 122.0
+  # The staff strip and one status line (`compact_ops/1`, `status_band`).
+  @compact_height 166.0
   # Height shading (see `shade/1`): white over the background, strongest at
   # the top of the part's range, none at the bottom. Subtle on purpose.
   @shade_max 0.07
@@ -65,7 +71,11 @@ defmodule ChoirCoach.PracticeView do
     }
   }
 
-  @doc "All canvas ops for one frame."
+  @doc """
+  All canvas ops for one frame. With `status_band: true` (a roll too short
+  for the floating lyric and note) the status line sits in a band under the
+  staff, as in `compact_ops/1`, and the roll starts below it.
+  """
   @spec ops(frame()) :: [map()]
   def ops(frame) do
     g = geometry(frame)
@@ -81,12 +91,25 @@ defmodule ChoirCoach.PracticeView do
       # shading runs edge to edge.
       pitch_shade(frame, g),
       staff(frame, g),
-      cluster(frame, g),
+      if(status_band?(frame), do: status_band(frame, g), else: cluster(frame, g)),
       bottom_scrim(g)
     ])
   end
 
-  @compact_height 166.0
+  defp status_band?(frame), do: Map.get(frame, :status_band, false)
+
+  defp status_band(frame, g) do
+    [
+      rect(0, @strip_height, g.width, @compact_height - @strip_height,
+        color: Style.bg(),
+        fill: true
+      ),
+      status_line(frame)
+    ]
+  end
+
+  @doc "Height of the staff strip at the top of the canvas; the roll is below."
+  def staff_height, do: @strip_height
 
   @doc "Height of the compact canvas: the staff strip and one status line."
   def compact_height, do: @compact_height
@@ -110,15 +133,13 @@ defmodule ChoirCoach.PracticeView do
   @doc """
   Geometry shared by every layer: the time and pitch scales and the
   playhead / roll positions for this canvas size. The time scale is the
-  design's (width × 0.625 ÷ 2.9 s per second) unless that would make a beat
-  narrower than `Style.min_beat_dp/0`.
+  design's (`time_width` × 0.625 ÷ 2.9 s per second) unless that would make
+  a beat narrower than `Style.min_beat_dp/0`.
   """
   @spec geometry(frame()) :: map()
   def geometry(%{width: w, height: h} = frame) do
-    roll_top = @strip_height
-    playhead_x = w * Style.playhead_fraction()
-    design_pps = (w - playhead_x) / Style.future_seconds()
-    pps = max(design_pps, Style.min_beat_dp() * frame.song.tempo_bpm / 60)
+    roll_top = if status_band?(frame), do: @compact_height, else: @strip_height
+    {playhead_x, pps} = time_scale(frame)
 
     %{
       width: w,
@@ -133,6 +154,23 @@ defmodule ChoirCoach.PracticeView do
       to_ms: frame.t_ms + (w - playhead_x) / pps * 1000,
       t_ms: frame.t_ms
     }
+  end
+
+  @doc """
+  How much music (ms) shows behind the playhead on a canvas `width` wide
+  (with `time_width` and `song` as in a frame).
+  """
+  @spec past_ms(map()) :: float()
+  def past_ms(frame) do
+    {playhead_x, pps} = time_scale(frame)
+    playhead_x / pps * 1000
+  end
+
+  defp time_scale(%{width: w} = frame) do
+    tw = Map.get(frame, :time_width, w)
+    playhead_x = w * Style.playhead_fraction()
+    design_pps = (tw - tw * Style.playhead_fraction()) / Style.future_seconds()
+    {playhead_x, max(design_pps, Style.min_beat_dp() * frame.song.tempo_bpm / 60)}
   end
 
   # Coordinates are rounded to 0.1 dp: invisible on screen, and it keeps each
