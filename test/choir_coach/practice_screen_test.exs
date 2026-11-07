@@ -166,6 +166,44 @@ defmodule ChoirCoach.PracticeScreenTest do
     refute assigns(dropped).playing
   end
 
+  # The tag of every tappable node, and whether it also takes the press that
+  # keeps its tap alive across the playback re-renders (lost taps otherwise:
+  # Mob's Android bridge drops a plain tap from an earlier render).
+  defp taps(view) do
+    for %{props: %{on_tap: {_pid, tag}} = props} <- flatten(view) do
+      {tag, match?({_, :held}, props[:on_press_out])}
+    end
+  end
+
+  test "while playing, every control on screen and in the mix sheet keeps its tap through re-renders" do
+    playing = ready_view() |> put_time(10_000.0) |> render_info({:tap, :play_pause})
+    sheet = render_info(playing, {:tap, :mix})
+
+    for view <- [playing, sheet] do
+      unguarded = for {tag, false} <- taps(view), do: tag
+      assert unguarded == []
+    end
+
+    assert {:mix, true} in taps(sheet)
+    assert {{:preset, :right_ear}, true} in taps(sheet)
+    # The lift itself does nothing.
+    assert assigns(render_info(sheet, {:press_out, :held})).playing
+  end
+
+  test "the mix sheet's Done closes it, as the Mix button does" do
+    sheet = ready_view() |> render_info({:tap, :mix})
+    assert assigns(sheet).mix_open
+
+    done =
+      Enum.find(find_all(sheet, :box), fn box ->
+        match?({_, :mix}, box.props[:on_tap]) and text(box) == "Done"
+      end)
+
+    assert done
+    {_pid, tag} = done.props.on_tap
+    refute assigns(render_info(sheet, {:tap, tag})).mix_open
+  end
+
   test "a preset applies at once: the same recordings re-set the gains; a whole recording reloads in place" do
     view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
 

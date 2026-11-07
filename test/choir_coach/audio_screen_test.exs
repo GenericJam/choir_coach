@@ -195,6 +195,18 @@ defmodule ChoirCoach.AudioScreenTest do
     assert text(view) =~ "Good"
   end
 
+  test "every control keeps its tap through the meter's re-renders" do
+    view = AudioScreen |> mount_screen(%{practice: self()}) |> render_info({:tap, :calibrate})
+
+    unguarded =
+      for %{props: %{on_tap: {_pid, tag}} = props} <- flatten(view),
+          not match?({_, :held}, props[:on_press_out]),
+          do: tag
+
+    assert unguarded == []
+    assert assigns(render_info(view, {:press_out, :held})).calibration == :loading
+  end
+
   # Silence every 10 ms, and a sung "ta" `lag` ms after each click.
   defp sung_readings(lag) do
     quiet = for t <- 0..6500//10, do: {t * 1.0, nil, 0.0, -60.0}

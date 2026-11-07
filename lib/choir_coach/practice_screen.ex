@@ -168,6 +168,7 @@ defmodule ChoirCoach.PracticeScreen do
             height={ctl_h}
             draw={ControlsView.control(:restart, "Restart", false, ctl_w)}
             on_tap={restart}
+            on_press_out={held()}
           />
           <Spacer />
           <Canvas
@@ -175,6 +176,7 @@ defmodule ChoirCoach.PracticeScreen do
             height={ctl_h}
             draw={ControlsView.control(:back_bar, "−1 bar", false, ctl_w)}
             on_tap={back}
+            on_press_out={held()}
           />
           <Spacer />
           <Canvas
@@ -182,6 +184,7 @@ defmodule ChoirCoach.PracticeScreen do
             height={ControlsView.play_size()}
             draw={ControlsView.play_button(shows_pause?(assigns))}
             on_tap={play}
+            on_press_out={held()}
           />
           <Spacer />
           <Canvas
@@ -189,6 +192,7 @@ defmodule ChoirCoach.PracticeScreen do
             height={ctl_h}
             draw={ControlsView.control(:forward_bar, "+1 bar", false, ctl_w)}
             on_tap={forward}
+            on_press_out={held()}
           />
           <Spacer />
           <Canvas
@@ -196,6 +200,7 @@ defmodule ChoirCoach.PracticeScreen do
             height={ctl_h}
             draw={ControlsView.control(:loop, loop_caption(assigns.song), assigns.loop, ctl_w)}
             on_tap={loop}
+            on_press_out={held()}
           />
           <Spacer />
           <Canvas
@@ -203,12 +208,21 @@ defmodule ChoirCoach.PracticeScreen do
             height={ctl_h}
             draw={ControlsView.control(:mix, Mix.caption(assigns.mix), assigns.mix_open, ctl_w)}
             on_tap={mix}
+            on_press_out={held()}
           />
         </Row>
       </Column>
     </Column>
     """
   end
+
+  # Every tap target here also declares `on_press_out` (this, ignored). While
+  # a song plays the screen re-renders ~30 times a second, and Mob's Android
+  # bridge drops a plain tap whose handle is from an earlier render, so most
+  # taps during playback were lost. A node with a press handler gets its tap
+  # matched by slot, pid and tag instead (Mob's MOB-380 path), which survives
+  # the re-render.
+  defp held, do: {self(), :held}
 
   # The roll, or (mix open) the compact staff + status line over the sheet.
   defp stage(%{mix_open: false}, frame) do
@@ -238,6 +252,7 @@ defmodule ChoirCoach.PracticeScreen do
         <Text
           text="‹"
           on_tap={back_tap}
+          on_press_out={held()}
           text_size={30}
           text_color={Style.text_secondary()}
           padding_left={8}
@@ -251,7 +266,13 @@ defmodule ChoirCoach.PracticeScreen do
           max_lines={1}
           weight={1}
         />
-        <Canvas width={36} height={36} draw={ControlsView.headphones(36)} on_tap={audio_tap} />
+        <Canvas
+          width={36}
+          height={36}
+          draw={ControlsView.headphones(36)}
+          on_tap={audio_tap}
+          on_press_out={held()}
+        />
       </Row>
       <Row height={40} align={:center} padding_left={14}>
         <Text
@@ -262,6 +283,7 @@ defmodule ChoirCoach.PracticeScreen do
           max_lines={1}
           weight={1}
           on_tap={if(assigns.offer_delay, do: audio_tap)}
+          on_press_out={if(assigns.offer_delay, do: held())}
         />
         {part_switch(assigns)}
       </Row>
@@ -287,6 +309,7 @@ defmodule ChoirCoach.PracticeScreen do
           padding_bottom={7}
           fill_width={false}
           on_tap={tap}
+          on_press_out={held()}
         >
           <Text
             text={part_name(part)}
@@ -318,14 +341,14 @@ defmodule ChoirCoach.PracticeScreen do
     <Box background={Style.surface()} corner_radius={24} height={height}>
       <Scroll>
         <Column padding_left={20} padding_right={20} padding_bottom={16} gap={12}>
-          <Box padding_top={8} padding_bottom={4} on_tap={close}>
+          <Box padding_top={8} padding_bottom={4} on_tap={close} on_press_out={held()}>
             <Row>
               <Spacer />
               <Box background={0x40FFFFFF} corner_radius={2} width={36} height={4} />
               <Spacer />
             </Row>
           </Box>
-          <Row align={:center}>
+          <Row align={:center} gap={10}>
             <Text
               text="What you hear"
               text_size={22}
@@ -334,11 +357,32 @@ defmodule ChoirCoach.PracticeScreen do
               weight={1}
             />
             <Box
+              background={Style.accent()}
+              corner_radius={18}
+              padding_left={16}
+              padding_right={16}
+              padding_top={8}
+              padding_bottom={8}
+              fill_width={false}
+              on_tap={close}
+              on_press_out={held()}
+            >
+              <Text
+                text="Done"
+                text_size={Style.type(:status)}
+                text_color={Style.bg()}
+                font_weight="bold"
+              />
+            </Box>
+          </Row>
+          <Row>
+            <Box
               background={0x24FFFFFF}
               corner_radius={18}
               padding={8}
               fill_width={false}
               on_tap={audio_tap}
+              on_press_out={held()}
             >
               <Row align={:center} gap={6}>
                 <Canvas
@@ -394,6 +438,7 @@ defmodule ChoirCoach.PracticeScreen do
       padding_bottom={10}
       fill_width={false}
       on_tap={tap}
+      on_press_out={if(tap, do: held())}
     >
       <Text
         text={label}
@@ -448,8 +493,9 @@ defmodule ChoirCoach.PracticeScreen do
             height={40}
             draw={MixView.swatch(assigns.part, row, 40)}
             on_tap={toggle}
+            on_press_out={held()}
           />
-          <Box weight={1} on_tap={expand}>
+          <Box weight={1} on_tap={expand} on_press_out={held()}>
             <Row align={:center}>
               <Column weight={1}>
                 <Text
@@ -581,6 +627,9 @@ defmodule ChoirCoach.PracticeScreen do
   def handle_info({:tap, :back}, socket) do
     {:noreply, Mob.Socket.pop_screen(socket)}
   end
+
+  # The lift after a tap (see `held/0`): nothing to do.
+  def handle_info({:press_out, :held}, socket), do: {:noreply, socket}
 
   # While a track loads, play / pause toggles whether it starts once ready.
   def handle_info({:tap, :play_pause}, socket) do

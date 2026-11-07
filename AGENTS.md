@@ -127,7 +127,13 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
   Dragging the progress track (`on_drag`, `{:drag, :scrub, …}`) pauses,
   moves the playhead with the finger, and plays on from the release point
   if it was playing; on Android a tap alone doesn't seek (a drag starts past
-  touch slop). A mix
+  touch slop). **Every `on_tap` on a screen that re-renders on a timer (the
+  practice screen while playing, the Audio screen's meter) also declares
+  `on_press_out={held()}`**: Mob's Android bridge drops a plain tap whose
+  handle is from an earlier render (MOB-509), which lost most taps during
+  playback; a press node's tap is matched by slot, pid and tag instead. The
+  screen tests check every tap target has it. The mix sheet closes with its
+  Done button, the grab bar or the Mix toggle. A mix
   change re-sets gains, or reloads in place when it needs other files. The
   part's mix is saved when the sheet closes, the part changes or the song
   is left. New headphones get one offer to set their delay. Test mode

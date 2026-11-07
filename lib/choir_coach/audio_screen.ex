@@ -111,7 +111,7 @@ defmodule ChoirCoach.AudioScreen do
     ~MOB"""
     <Column background={Style.bg()} fill_height={true}>
       <Row height={56} align={:center} padding_left={8} padding_right={20}>
-        <Canvas width={44} height={44} draw={chevron_icon()} on_tap={back} />
+        <Canvas width={44} height={44} draw={chevron_icon()} on_tap={back} on_press_out={held()} />
         <Text text="Audio" text_size={24} text_color={Style.text_primary()} font_weight="bold" />
       </Row>
       <Scroll weight={1}>
@@ -178,7 +178,14 @@ defmodule ChoirCoach.AudioScreen do
         else: {Style.text_tertiary(), Style.text_tertiary(), Style.text_tertiary()}
 
     ~MOB"""
-    <Row id={id} align={:center} padding={16} gap={16} on_tap={tap}>
+    <Row
+      id={id}
+      align={:center}
+      padding={16}
+      gap={16}
+      on_tap={tap}
+      on_press_out={if(tap, do: held())}
+    >
       <Canvas width={28} height={28} draw={icon(icon, icon_color)} />
       <Column weight={1} gap={2}>
         <Text text={title} text_size={17} text_color={title_color} font_weight="bold" />
@@ -368,7 +375,14 @@ defmodule ChoirCoach.AudioScreen do
 
   defp round_button(label, tap) do
     ~MOB"""
-    <Box background={soft_button_color()} corner_radius={28} width={56} height={56} on_tap={tap}>
+    <Box
+      background={soft_button_color()}
+      corner_radius={28}
+      width={56}
+      height={56}
+      on_tap={tap}
+      on_press_out={held()}
+    >
       <Text
         text={label}
         text_size={24}
@@ -430,7 +444,13 @@ defmodule ChoirCoach.AudioScreen do
 
   defp big_button(label, tap, mic_icon?) do
     ~MOB"""
-    <Box background={Style.play_button()} corner_radius={30} fill_width={true} on_tap={tap}>
+    <Box
+      background={Style.play_button()}
+      corner_radius={30}
+      fill_width={true}
+      on_tap={tap}
+      on_press_out={if(tap, do: held())}
+    >
       <Row align={:center} padding={18} gap={10}>
         <Spacer />
         <Canvas :if={mic_icon?} width={24} height={24} draw={icon(:mic, ink())} />
@@ -449,7 +469,14 @@ defmodule ChoirCoach.AudioScreen do
       end
 
     ~MOB"""
-    <Box background={background} corner_radius={24} padding={14} weight={1} on_tap={tap}>
+    <Box
+      background={background}
+      corner_radius={24}
+      padding={14}
+      weight={1}
+      on_tap={tap}
+      on_press_out={held()}
+    >
       <Text
         text={label}
         text_size={16}
@@ -468,9 +495,18 @@ defmodule ChoirCoach.AudioScreen do
     """
   end
 
+  # Every tap target also declares `on_press_out` (this, ignored): the meter
+  # re-renders the screen every 100 ms, and Mob's Android bridge drops a
+  # plain tap whose handle is from an earlier render. A node with a press
+  # handler has its tap matched by slot, pid and tag instead (MOB-380).
+  defp held, do: {self(), :held}
+
   # ── Events ───────────────────────────────────────────────────────────────
 
   def handle_info({:tap, :back}, socket), do: {:noreply, Mob.Socket.pop_screen(socket)}
+
+  # The lift after a tap (see `held/0`): nothing to do.
+  def handle_info({:press_out, :held}, socket), do: {:noreply, socket}
 
   def handle_info({:tap, {:output, id}}, socket) do
     devices = socket.assigns.devices
