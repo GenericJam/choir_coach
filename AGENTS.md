@@ -281,6 +281,16 @@ later than the score, and AudioToolbox decodes these MP3s 576 frames
 (13 ms) later than ffmpeg (it keeps the LAME encoder delay). The simulator
 can't measure the mic's latency (the Mac's speaker into its webcam mic).
 
+On Kevin's iPhone SE (3rd gen; `mix mob.deploy --native --ios --device
+00008110-001E1C3A34F8401E`, node `choir_coach_ios@<link-local ip>` as
+`mob.connect` prints it): test mode fits 95–96% at 0 ms, 99% at −40 ms;
+the speaker into the iPhone's own mic (`SOURCE=mic`) fits 88–95% at 0 ms,
+best at +20 ms, so its speaker loop is ~40 ms (the 60 ms default is close;
+"Set by singing along" refines it). Presets, the part switch, the Audio
+screen round trip and leaving a song behave as on Android. Coordinate taps
+don't reach a physical iPhone (`Mob.Test.tap_xy` has no effect there), so
+drive it with `Mob.Test.tap/2` by tag.
+
 ## Sharing the app (Android)
 
 Choir members install a signed APK (no Play Store: the recordings make it
