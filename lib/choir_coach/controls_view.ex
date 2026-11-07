@@ -1,8 +1,8 @@
 defmodule ChoirCoach.ControlsView do
   @moduledoc """
   Canvas ops for the transport row (restart, back one bar, play / pause,
-  loop, the mix), the progress track with its loop range, and the header's
-  headphones icon.
+  forward one bar, loop, the mix), the progress track with its loop range,
+  and the header's headphones icon.
 
   Each control is its own small canvas so it can take a tap. Icons are
   drawn from lines and arcs in the handoff's chrome colours; captions sit
@@ -14,21 +14,32 @@ defmodule ChoirCoach.ControlsView do
   alias ChoirCoach.Style
 
   @size 64
+  @min_size 48
   @play 72
+  @progress_height 40
 
   def size, do: @size
   def play_size, do: @play
+  def progress_height, do: @progress_height
 
-  @doc "Ops for a secondary control: `:restart`, `:back_bar`, `:loop` or `:mix`."
-  @spec control(atom(), String.t(), boolean()) :: [map()]
-  def control(kind, caption, active \\ false) do
-    cx = @size / 2
+  @doc """
+  Width of each secondary control so `count` of them and the play button
+  fit in `row_width`: 64 dp where there is room, down to 48 dp.
+  """
+  @spec control_width(number(), pos_integer()) :: number()
+  def control_width(row_width, count),
+    do: (row_width - @play) |> Kernel./(count) |> floor() |> min(@size) |> max(@min_size)
+
+  @doc "Ops for a secondary control (`:restart`, `:back_bar`, `:forward_bar`, `:loop`, `:mix`), `width` wide."
+  @spec control(atom(), String.t(), boolean(), number()) :: [map()]
+  def control(kind, caption, active \\ false, width \\ @size) do
+    cx = width / 2
     cy = 24
 
     List.flatten([
       if(active,
         do:
-          rect(4, 0, @size - 8, @size,
+          rect(2, 0, width - 4, @size,
             color: Style.accent(),
             fill: true,
             radius: 14,
@@ -85,6 +96,23 @@ defmodule ChoirCoach.ControlsView do
         join: :round
       ),
       path([{cx + 9, cy - 8}, {cx, cy}, {cx + 9, cy + 8}],
+        color: color,
+        width: 2,
+        closed: true,
+        join: :round
+      )
+    ]
+  end
+
+  defp icon(:forward_bar, cx, cy, color) do
+    [
+      path([{cx, cy - 8}, {cx + 9, cy}, {cx, cy + 8}],
+        color: color,
+        width: 2,
+        closed: true,
+        join: :round
+      ),
+      path([{cx - 9, cy - 8}, {cx, cy}, {cx - 9, cy + 8}],
         color: color,
         width: 2,
         closed: true,
@@ -153,11 +181,12 @@ defmodule ChoirCoach.ControlsView do
 
   @doc """
   Progress track: played portion, the loop range in the UI accent, and the
-  position knob. `fraction` and the loop bounds are 0..1 of the section.
+  position knob, centred in a #{@progress_height} dp tall canvas (a finger-sized
+  target for scrubbing). `fraction` and the loop bounds are 0..1 of the section.
   """
   @spec progress(number(), number(), {number(), number()} | nil) :: [map()]
   def progress(width, fraction, loop) do
-    y = 12
+    y = @progress_height / 2
     knob_x = width * min(max(fraction, 0), 1)
 
     List.flatten([

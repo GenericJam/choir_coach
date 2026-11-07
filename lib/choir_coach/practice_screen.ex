@@ -8,9 +8,11 @@ defmodule ChoirCoach.PracticeScreen do
   (the song time being heard), drains the pitch readings since the last
   frame into the trace, advances the feedback smoother and re-renders.
 
-  Controls: restart, back one bar, play / pause, loop the song, and Mix,
-  which opens "What you hear" over the roll (the staff and a status line
-  stay live): presets, each source's level and balance, and the ear map.
+  Controls: restart, back one bar, play / pause, forward one bar, loop the
+  song, and Mix, which opens "What you hear" over the roll (the staff and a
+  status line stay live): presets, each source's level and balance, and the
+  ear map. Dragging the progress track scrubs: playback pauses while the
+  finger moves and plays on from where it's let go.
   The header's Bass | Melody switch changes the part at the same song time;
   the headphones icon opens `ChoirCoach.AudioScreen`.
   """
@@ -39,7 +41,7 @@ defmodule ChoirCoach.PracticeScreen do
   # Silence shorter than this (one unsure reading) isn't a breath.
   @dropout_ms 150
   @header_height 96
-  @controls_height 150
+  @controls_height 166
   # Outputs worth measuring a delay for (headphones, wired or not; the
   # Bluetooth call route once the singer picks the headset microphone).
   @headphone_kinds [:bluetooth, :bluetooth_sco, :usb, :wired_headset, :wired_headphones]
@@ -83,6 +85,8 @@ defmodule ChoirCoach.PracticeScreen do
         mic_delay: 0,
         audio_status: :loading,
         resume_at: nil,
+        # While the progress track is dragged: whether to play on release.
+        scrub: nil,
         mic: :unknown,
         listening: :off,
         # What to listen to whenever a track is ready: the mic, or the track
@@ -107,8 +111,10 @@ defmodule ChoirCoach.PracticeScreen do
 
   def render(assigns) do
     sa = Map.get(assigns, :safe_area, %{top: 0.0, bottom: 0.0})
-    # Room for the two clock labels (~36 dp each) and their gaps.
-    progress_w = assigns.screen_w - 2 * 24 - 2 * 46
+    progress_w = progress_width(assigns)
+    # Restart, −1 bar, +1 bar, loop and Mix share the row with play.
+    ctl_w = ControlsView.control_width(assigns.screen_w - 2 * 24, 5)
+    ctl_h = ControlsView.size()
 
     frame = %{
       song: assigns.song,
@@ -124,9 +130,12 @@ defmodule ChoirCoach.PracticeScreen do
 
     restart = {self(), :restart}
     back = {self(), :back_bar}
+    forward = {self(), :forward_bar}
     play = {self(), :play_pause}
     loop = {self(), :loop}
     mix = {self(), :mix}
+    # Scrubbing re-renders the roll: ~20 updates a second is smooth enough.
+    scrub = {self(), :scrub, [throttle: 50]}
 
     ~MOB"""
     <Column background={Style.bg()} fill_height={true}>
@@ -142,8 +151,9 @@ defmodule ChoirCoach.PracticeScreen do
           <Spacer />
           <Canvas
             width={progress_w}
-            height={24}
+            height={ControlsView.progress_height()}
             draw={ControlsView.progress(progress_w, progress_fraction(assigns), loop_fraction(assigns))}
+            on_drag={scrub}
           />
           <Spacer />
           <Text
@@ -154,16 +164,16 @@ defmodule ChoirCoach.PracticeScreen do
         </Row>
         <Row align={:center}>
           <Canvas
-            width={ControlsView.size()}
-            height={ControlsView.size()}
-            draw={ControlsView.control(:restart, "Restart")}
+            width={ctl_w}
+            height={ctl_h}
+            draw={ControlsView.control(:restart, "Restart", false, ctl_w)}
             on_tap={restart}
           />
           <Spacer />
           <Canvas
-            width={ControlsView.size()}
-            height={ControlsView.size()}
-            draw={ControlsView.control(:back_bar, "−1 bar")}
+            width={ctl_w}
+            height={ctl_h}
+            draw={ControlsView.control(:back_bar, "−1 bar", false, ctl_w)}
             on_tap={back}
           />
           <Spacer />
@@ -175,16 +185,23 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
-            width={ControlsView.size()}
-            height={ControlsView.size()}
-            draw={ControlsView.control(:loop, loop_caption(assigns.song), assigns.loop)}
+            width={ctl_w}
+            height={ctl_h}
+            draw={ControlsView.control(:forward_bar, "+1 bar", false, ctl_w)}
+            on_tap={forward}
+          />
+          <Spacer />
+          <Canvas
+            width={ctl_w}
+            height={ctl_h}
+            draw={ControlsView.control(:loop, loop_caption(assigns.song), assigns.loop, ctl_w)}
             on_tap={loop}
           />
           <Spacer />
           <Canvas
-            width={ControlsView.size()}
-            height={ControlsView.size()}
-            draw={ControlsView.control(:mix, Mix.caption(assigns.mix), assigns.mix_open)}
+            width={ctl_w}
+            height={ctl_h}
+            draw={ControlsView.control(:mix, Mix.caption(assigns.mix), assigns.mix_open, ctl_w)}
             on_tap={mix}
           />
         </Row>
@@ -588,6 +605,43 @@ defmodule ChoirCoach.PracticeScreen do
     {:noreply, seek(socket, target)}
   end
 
+  # The next bar's start; nothing past the last bar.
+  def handle_info({:tap, :forward_bar}, socket) do
+    a = socket.assigns
+
+    case Song.bar_after(a.song, Song.bar_at(a.song, a.t_ms).number) do
+      nil -> {:noreply, socket}
+      next -> {:noreply, seek(socket, next.start_ms)}
+    end
+  end
+
+  # Dragging the progress track: playback pauses while the finger moves and
+  # the staff and roll follow it; letting go plays on from there if it was
+  # playing (or about to) when the drag began. A :began always starts afresh,
+  # so a drag whose end never arrived can't carry its intent into the next.
+  def handle_info({:drag, :scrub, %{x: x, phase: phase}}, socket) do
+    a = socket.assigns
+    t = scrub_time(a, x)
+
+    socket =
+      if a.scrub && phase != :began,
+        do: socket,
+        else:
+          socket
+          |> then(&if(a.playing or a.resume_at, do: pause(&1), else: &1))
+          |> Mob.Socket.assign(:scrub, %{resume: a.playing or a.resume_at != nil})
+
+    socket = socket |> Mob.Socket.assign(:t_ms, t) |> reset_trace()
+
+    if phase in [:began, :dragging] do
+      {:noreply, socket}
+    else
+      resume = socket.assigns.scrub.resume
+      socket = Mob.Socket.assign(socket, :scrub, nil)
+      {:noreply, if(resume, do: play(socket), else: socket)}
+    end
+  end
+
   def handle_info({:tap, :loop}, socket) do
     {:noreply, Mob.Socket.assign(socket, :loop, not socket.assigns.loop)}
   end
@@ -750,7 +804,13 @@ defmodule ChoirCoach.PracticeScreen do
     socket =
       socket
       |> cancel_tick()
-      |> Mob.Socket.assign(attached: false, playing: false, resume_at: nil, listening: :off)
+      |> Mob.Socket.assign(
+        attached: false,
+        playing: false,
+        resume_at: nil,
+        listening: :off,
+        scrub: nil
+      )
 
     if Audio.Lease.await(self()) == :free and retry,
       do: Process.send_after(self(), {:audio_engine_reset}, @retry_ms)
@@ -1128,6 +1188,16 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   defp progress_fraction(a), do: a.t_ms / Song.duration_ms(a.song)
+
+  # The track spans the row between the two clock labels (~36 dp each and
+  # their gaps) inside the 24 dp margins.
+  defp progress_width(assigns), do: assigns.screen_w - 2 * 24 - 2 * 46
+
+  # Song time under a finger `x` dp along the progress track.
+  defp scrub_time(a, x) do
+    fraction = (x / progress_width(a)) |> max(0.0) |> min(1.0)
+    fraction * Song.duration_ms(a.song)
+  end
 
   defp loop_fraction(%{loop: false}), do: nil
   defp loop_fraction(%{loop: true}), do: {0.0, 1.0}

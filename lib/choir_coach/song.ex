@@ -267,6 +267,10 @@ defmodule ChoirCoach.Song do
   @spec bar_before(t(), pos_integer()) :: bar() | nil
   def bar_before(%__MODULE__{bars: bars}, number), do: Enum.find(bars, &(&1.number == number - 1))
 
+  @doc "The bar after bar `number`, or nil for the last."
+  @spec bar_after(t(), pos_integer()) :: bar() | nil
+  def bar_after(%__MODULE__{bars: bars}, number), do: Enum.find(bars, &(&1.number == number + 1))
+
   @doc """
   The note sounding at `t_ms`, or else the nearest note starting or ending
   within `margin_ms` of it (an early or late entry); nil in a rest.

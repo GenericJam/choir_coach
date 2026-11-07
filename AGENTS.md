@@ -122,7 +122,12 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
   the trace and feedback. Header: title and headphones icon (→ Audio), then
   the facts with the current bar and the Bass | Melody switch (same song
   time, that part's mix and engine state). Transport: restart, −1 bar,
-  play, loop, Mix (opens "What you hear"; its caption is the preset). A mix
+  play, +1 bar, loop, Mix (opens "What you hear"; its caption is the
+  preset); the controls narrow to fit (`ControlsView.control_width/2`).
+  Dragging the progress track (`on_drag`, `{:drag, :scrub, …}`) pauses,
+  moves the playhead with the finger, and plays on from the release point
+  if it was playing; on Android a tap alone doesn't seek (a drag starts past
+  touch slop). A mix
   change re-sets gains, or reloads in place when it needs other files. The
   part's mix is saved when the sheet closes, the part changes or the song
   is left. New headphones get one offer to set their delay. Test mode

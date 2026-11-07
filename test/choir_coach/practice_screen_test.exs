@@ -95,6 +95,77 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert assigns(early).t_ms == Song.bar_start(song, 21)
   end
 
+  test "+1 bar jumps to the next bar's start; on the last bar it stays put" do
+    view = ready_view()
+    song = assigns(view).song
+    bar = Song.bar_start(song, 22)
+
+    ahead =
+      view |> put_time(bar + 2 * Song.beat_ms(song, bar)) |> render_info({:tap, :forward_bar})
+
+    assert assigns(ahead).t_ms == Song.bar_start(song, 23)
+
+    last = List.last(song.bars)
+    at_end = view |> put_time(last.start_ms + 10) |> render_info({:tap, :forward_bar})
+    assert assigns(at_end).t_ms == last.start_ms + 10
+  end
+
+  test "dragging the progress track pauses, follows the finger, and plays on from where it's let go" do
+    view = ready_view() |> put_time(10_000.0) |> render_info({:tap, :play_pause})
+    assert assigns(view).playing
+    duration = Song.duration_ms(assigns(view).song)
+    width = assigns(view).screen_w - 2 * 24 - 2 * 46
+
+    held = render_info(view, {:drag, :scrub, %{x: width / 4, phase: :began}})
+    refute assigns(held).playing
+    assert_in_delta assigns(held).t_ms, duration / 4, 1
+
+    moved = render_info(held, {:drag, :scrub, %{x: width / 2, phase: :dragging}})
+    refute assigns(moved).playing
+    assert_in_delta assigns(moved).t_ms, duration / 2, 1
+
+    # Past the end of the track it clamps to the end.
+    past = render_info(moved, {:drag, :scrub, %{x: width * 1.3, phase: :dragging}})
+    assert assigns(past).t_ms == duration
+
+    # Letting go resumes playback where the finger left.
+    let_go = render_info(past, {:drag, :scrub, %{x: width * 0.6, phase: :ended}})
+    assert assigns(let_go).playing
+    assert_in_delta assigns(let_go).t_ms, duration * 0.6, 1
+    assert assigns(let_go).scrub == nil
+
+    # Paused before the drag: it stays paused at the new place.
+    paused = ready_view()
+
+    dropped =
+      paused
+      |> render_info({:drag, :scrub, %{x: -20.0, phase: :began}})
+      |> render_info({:drag, :scrub, %{x: -20.0, phase: :ended}})
+
+    refute assigns(dropped).playing
+    assert assigns(dropped).t_ms == 0.0
+  end
+
+  test "a drag cut short by opening Audio doesn't start playback after coming back" do
+    playing = ready_view() |> put_time(10_000.0) |> render_info({:tap, :play_pause})
+    width = assigns(playing).screen_w - 2 * 24 - 2 * 46
+
+    # The drag's end never arrives: Audio takes the engine mid-drag.
+    back =
+      playing
+      |> render_info({:drag, :scrub, %{x: width / 4, phase: :dragging}})
+      |> through_audio({:mic_delay, 60})
+
+    assert assigns(back).scrub == nil
+
+    dropped =
+      back
+      |> render_info({:drag, :scrub, %{x: width / 2, phase: :began}})
+      |> render_info({:drag, :scrub, %{x: width / 2, phase: :ended}})
+
+    refute assigns(dropped).playing
+  end
+
   test "a preset applies at once: the same recordings re-set the gains; a whole recording reloads in place" do
     view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
 
