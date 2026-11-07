@@ -6,10 +6,10 @@
 #     MIX_ENV=test mix run --no-start scripts/render_piano.exs HolyForever [bass|melody]
 #
 # Writes priv/audio/<song>/piano_<part>.mp3 on the part's rehearsal track's
-# timeline, laid out like it: the piano left, the rehearsal track's
-# accompaniment right, so the practice screen's voice and accompaniment levels
-# work the same. It is gitignored like the recordings, since its right channel
-# is theirs.
+# timeline and length: the piano alone, mono (the engine takes it as one
+# lane, which the mixer's gains send to either ear), 64 kbps. The
+# accompaniment comes from the rehearsal track itself. Gitignored like the
+# recordings.
 
 alias ChoirCoach.Song
 
@@ -92,16 +92,20 @@ end
 
 gain_db = mean_db.(rehearsal_path, "c0=c0") - mean_db.(wav_path, "c0=0.5*c0+0.5*c1")
 
+duration_s =
+  case System.cmd("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", rehearsal_path]) do
+    {s, 0} -> s |> String.trim() |> String.to_float()
+  end
+
 {_, 0} =
   System.cmd(
     "ffmpeg",
     [
-      "-v", "error", "-y", "-i", wav_path, "-i", rehearsal_path,
-      "-filter_complex",
-      "[0:a]pan=mono|c0=0.5*c0+0.5*c1,volume=#{gain_db}dB," <>
-        "alimiter=limit=0.89:attack=5:release=50:level=0,apad[p];" <>
-        "[1:a]pan=mono|c0=c1[b];[p][b]amerge=inputs=2[out]",
-      "-map", "[out]", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "192k", out
+      "-v", "error", "-y", "-i", wav_path,
+      "-af",
+      "pan=mono|c0=0.5*c0+0.5*c1,volume=#{gain_db}dB," <>
+        "alimiter=limit=0.89:attack=5:release=50:level=0,apad=whole_dur=#{duration_s}",
+      "-t", "#{duration_s}", "-ar", "44100", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", out
     ],
     stderr_to_stdout: true
   )

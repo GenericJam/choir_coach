@@ -39,8 +39,11 @@ defmodule ChoirCoach.PracticeView do
   @staff_top 20.0
   # Two lyric rows under the staff; a syllable drops to the second row when
   # it would run into its neighbour on the first.
-  @staff_lyric_rows [72.0, 87.0]
-  @strip_height 106.0
+  @staff_lyric_rows [72.0, 96.0]
+  @strip_height 122.0
+  # Height shading (see `shade/1`): white over the background, strongest at
+  # the top of the part's range, none at the bottom. Subtle on purpose.
+  @shade_max 0.07
 
   # Staff geometry per clef, as diatonic staff steps: the bottom, middle and
   # top lines, and the lines and spaces engravers put the key signature on
@@ -74,13 +77,16 @@ defmodule ChoirCoach.PracticeView do
       playhead(frame, g),
       voice(frame, g),
       edge_fades(g),
+      # Over the edge fades (which paint the plain background), so the
+      # shading runs edge to edge.
+      pitch_shade(frame, g),
       staff(frame, g),
       cluster(frame, g),
       bottom_scrim(g)
     ])
   end
 
-  @compact_height 150.0
+  @compact_height 166.0
 
   @doc "Height of the compact canvas: the staff strip and one status line."
   def compact_height, do: @compact_height
@@ -139,6 +145,24 @@ defmodule ChoirCoach.PracticeView do
 
   # ── Lanes: semitone lines, beat and bar lines, active band ──────────────
 
+  # Each semitone row of the roll shaded by its pitch within the part's
+  # range (`shade/1`), so a note's height reads as a shade wherever the roll
+  # has scrolled.
+  defp pitch_shade(frame, g) do
+    lowest = g.center_midi - (g.height - g.center_y) / g.semitone
+    highest = g.center_midi + (g.center_y - g.roll_top) / g.semitone
+    {lo, hi} = range(frame.song)
+
+    for m <- floor(lowest)..ceil(highest),
+        opacity = shade((m - lo) / max(hi - lo, 1)),
+        opacity > 0.002,
+        top = max(y_of(g, m + 0.5), g.roll_top),
+        bottom = y_of(g, m - 0.5),
+        bottom > top do
+      rect(0, top, g.width, bottom - top, color: Style.white(), fill: true, opacity: opacity)
+    end
+  end
+
   defp lanes(frame, g) do
     lowest = g.center_midi - (g.height - g.center_y) / g.semitone
     highest = g.center_midi + (g.center_y - g.roll_top) / g.semitone
@@ -184,6 +208,22 @@ defmodule ChoirCoach.PracticeView do
 
     [semitones, beats, band]
   end
+
+  # The part's lowest and highest written pitch.
+  defp range(%Song{notes: []}), do: {60, 72}
+
+  defp range(%Song{notes: notes}) do
+    {%{midi: lo}, %{midi: hi}} = Enum.min_max_by(notes, & &1.midi)
+    {lo, hi}
+  end
+
+  @doc """
+  How much lighter a height is drawn, for `fraction` 0 (the bottom: the
+  plain background) to 1 (the top): a grey gradient that lets a singer who
+  doesn't read music compare how high notes sit, on the staff and the roll.
+  """
+  @spec shade(number()) :: float()
+  def shade(fraction), do: Float.round(@shade_max * (fraction |> max(0.0) |> min(1.0)), 4)
 
   # ── Note bars and the syllables beneath them ─────────────────────────────
 
@@ -605,8 +645,27 @@ defmodule ChoirCoach.PracticeView do
       fade_strips(clef_w, Style.staff_clef_fade(), 0, @strip_height, :fade_out),
       staff_lines(0, clef_w),
       clef_glyph(frame.song.clef),
-      key_signature(Song.bar_at(frame.song, frame.t_ms).key, clef)
+      key_signature(Song.bar_at(frame.song, frame.t_ms).key, clef),
+      staff_shade(g.width)
     ]
+  end
+
+  # The staff's height gradient, over everything so the clef zone matches:
+  # lightest above the top line, fading to nothing just below the bottom
+  # line, where the lyrics start.
+  defp staff_shade(width) do
+    top = 0.0
+    bottom = @staff_top + 4 * Style.staff_space() + 8
+    n = 16
+    h = (bottom - top) / n
+
+    for i <- 0..(n - 1) do
+      rect(0, top + i * h, width, h,
+        color: Style.white(),
+        fill: true,
+        opacity: shade(1 - (i + 0.5) / n)
+      )
+    end
   end
 
   defp active_column(nil, _color, _g), do: []
@@ -615,7 +674,7 @@ defmodule ChoirCoach.PracticeView do
     x0 = x_of(g, note.start_ms)
     x1 = x_of(g, note.start_ms + note.dur_ms) - Style.note_gap()
 
-    rect(x0, 6, max(x1 - x0, 24), 98,
+    rect(x0, 6, max(x1 - x0, 24), @strip_height - 8,
       color: color || Style.neutral(),
       fill: true,
       radius: 12,

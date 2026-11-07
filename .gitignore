@@ -43,3 +43,9 @@ xcuserdata/
 
 # Licensed rehearsal recordings: deployed to the device, never committed.
 /priv/audio/
+
+# Downloaded rehearsal recordings (licensed; scripts/compress_audio.sh makes the shipped copies)
+/audio_src/
+# Release bundle: OTP + BEAMs + priv/ (the licensed recordings)
+/android/app/src/release/assets/
+/android/build/

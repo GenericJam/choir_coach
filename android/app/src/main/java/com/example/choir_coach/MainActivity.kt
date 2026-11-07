@@ -238,6 +238,15 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "onCreate: MOB_DIST_PORT=$port")
         }
 
+        // A release (non-debuggable) build: tell the BEAM, so Mob.Dist leaves
+        // Erlang distribution off. Mob's Android launcher doesn't set this
+        // (only iOS does), and a shipped app must not listen for a remote
+        // shell with the development cookie.
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            android.system.Os.setenv("MOB_RELEASE", "1", true)
+            Log.i(TAG, "onCreate: release build, MOB_RELEASE=1")
+        }
+
         // A notification tap or deep link that launched this activity. Not when
         // it is re-created from saved state or relaunched from Recents: both
         // replay the original intent, which would deliver the same tap or link

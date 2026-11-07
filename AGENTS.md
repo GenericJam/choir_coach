@@ -68,8 +68,14 @@ its tokens live in `ChoirCoach.Style`.
   `%{parts: Songs.parts(module, my_part)}`.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. The staff follows the song's
-  clef: bass for tenor and bass, treble for soprano, alto and the melody. `compact_ops/1` is the
-  staff plus one status line, shown while the mix sheet covers the roll.
+  clef: bass for tenor and bass, treble for soprano, alto and the melody;
+  its lyrics are 1.5× the roll's (21 pt). Both the staff and the roll are
+  shaded by height (`shade/1`): white at up to 7% over the background,
+  lightest at the top, so a singer who doesn't read music can compare how
+  high notes sit. On the roll the shade follows the pitch within the part's
+  range (it scrolls with the notes), on the staff the line positions.
+  `compact_ops/1` is the staff plus one status line, shown while the mix
+  sheet covers the roll.
   `ChoirCoach.ControlsView` draws the transport icons, progress track and the
   headphones icon; `ChoirCoach.MixView` the mix sheet's swatches and ear map.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
@@ -159,9 +165,12 @@ its tokens live in `ChoirCoach.Style`.
 
 ## Audio files
 
-The rehearsal tracks are licensed recordings: they live in
-`priv/audio/<song>/` (gitignored) and reach the phone with the BEAMs on
-deploy. Each song has `soprano.mp3`, `alto.mp3`, `tenor.mp3` and `bass.mp3`
+The rehearsal tracks are licensed recordings (the choir's members may have
+them; they ship inside the app). The downloads live in `audio_src/<song>/`
+(gitignored, outside `priv/` so they don't ship); `scripts/compress_audio.sh`
+makes the shipped 128 kbps copies in `priv/audio/<song>/` (gitignored too),
+which reach the phone with the BEAMs on deploy and inside the release
+bundle. Each song has `soprano.mp3`, `alto.mp3`, `tenor.mp3` and `bass.mp3`
 (all voices left with that part loudest, the others about 12 dB down;
 accompaniment right; the part tracks share one timeline exactly),
 `split.mp3` (accompaniment left, full choir right) and `demo.mp3` (finished
@@ -170,9 +179,10 @@ is its own vocal mix). Offsets live in each song's `tracks/1`. The melody's
 rehearsal track is the soprano's, since the tune is mostly theirs.
 
 `piano_<part>.mp3` (soprano, alto, tenor, bass) is generated, not
-downloaded: the part as piano notes (as at in-person rehearsal), left, over
-the rehearsal track's accompaniment, right, on the rehearsal track's
-timeline: the mixer's "<Part> on piano" row. The melody has no piano: its
+downloaded: the part alone as piano notes (as at in-person rehearsal),
+mono, 64 kbps, on and as long as the rehearsal track's timeline: the
+mixer's "<Part> on piano" row (the engine takes it as one lane, which the
+row's gains send to either ear). The melody has no piano: its
 notes are canonical (transcribed, checked against the recordings) for the
 pitch checking, and the closest recordings are the Soprano rehearsal track
 and the demo. Regenerate a part's piano after any change to its notes or
@@ -185,9 +195,10 @@ every note on pitch.
 ## Adding a song
 
 1. Download from its Drive folder (score PDF, the four part rehearsal
-   tracks, Split, Demo) into `priv/audio/<slug>/` as `soprano.mp3`,
-   `alto.mp3`, `tenor.mp3`, `bass.mp3`, `split.mp3`, `demo.mp3`. The song
-   folders are public: `https://drive.usercontent.google.com/download?id=<file id>&export=download&confirm=t`.
+   tracks, Split, Demo) into `audio_src/<slug>/` as `soprano.mp3`,
+   `alto.mp3`, `tenor.mp3`, `bass.mp3`, `split.mp3`, `demo.mp3`, then run
+   `scripts/compress_audio.sh`. The song folders are public:
+   `https://drive.usercontent.google.com/download?id=<file id>&export=download&confirm=t`.
 2. Transcribe the bass (the lower voice of the bass-clef staff; tenor is the
    upper) bar by bar, sounding pitches with the key signature applied.
    `scripts/validate_transcription.exs` checks a chunk's beats and names.
@@ -217,6 +228,30 @@ every note on pitch.
    for each voice part; `tracks/1` points at it with the rehearsal track's
    `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
+
+## Sharing the app (Android)
+
+Choir members install a signed APK (no Play Store: the recordings make it
+too big for a base bundle). `mix mob.release --android` builds and signs the
+release (it stages the OTP runtime, the BEAMs and `priv/` into
+`android/app/src/release/assets/otp.zip`), then `cd android && ./gradlew
+assembleRelease` writes `android/app/build/outputs/apk/release/app-release.apk`.
+The upload key is `android/upload_jks.keystore` with
+`android/keystore.properties` (both gitignored; the passphrase is also in
+the macOS Keychain as `choir-coach-android-upload-keystore`). Keep both
+backed up: an update must be signed with the same key, or members have to
+uninstall first.
+
+A release build sets `MOB_RELEASE=1` in `MainActivity` (non-debuggable APK),
+so `Mob.Dist` leaves Erlang distribution off; Mob's Android launcher doesn't
+(MOB-510), and without it the shipped app listened on localhost with the
+development cookie. Check with `adb shell cat /proc/net/tcp`: no listener on
+ports 4369 (0x1111) or 9100 (0x238C). A release build can't be driven by
+`mob.connect` or the device checks for that reason; test on a dev build.
+
+The app unpacks its bundle on first launch, so it needs about twice the
+APK's size free. A release APK and a dev install can't sit side by side
+(different signatures): uninstall one first.
 
 ## Working on it
 

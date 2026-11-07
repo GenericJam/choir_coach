@@ -123,9 +123,8 @@ defmodule ChoirCoach.Style do
   def edge_fade_left, do: 28.0
   def edge_fade_right, do: 38.0
 
-  @doc "Staff strip: line spacing and the strip's height inside the canvas."
+  @doc "Staff strip: line spacing (the strip's height lives in `ChoirCoach.PracticeView`)."
   def staff_space, do: 10.0
-  def staff_strip_height, do: 106.0
   def staff_clef_zone, do: 58.0
   def staff_clef_fade, do: 20.0
 
@@ -139,7 +138,7 @@ defmodule ChoirCoach.Style do
   def type(:syllable), do: 13
   def type(:syllable_active), do: 14
   def type(:caption), do: 11
-  def type(:staff_lyric), do: 14
+  def type(:staff_lyric), do: 21
 
   # ── Pitch-feedback scale ────────────────────────────────────────────────
 
