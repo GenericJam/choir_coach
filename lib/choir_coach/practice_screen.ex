@@ -150,6 +150,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="progress"
             width={progress_w}
             height={ControlsView.progress_height()}
             draw={ControlsView.progress(progress_w, progress_fraction(assigns), loop_fraction(assigns))}
@@ -164,6 +165,7 @@ defmodule ChoirCoach.PracticeScreen do
         </Row>
         <Row align={:center}>
           <Canvas
+            id="ctl_restart"
             width={ctl_w}
             height={ctl_h}
             draw={ControlsView.control(:restart, "Restart", false, ctl_w)}
@@ -172,6 +174,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="ctl_back_bar"
             width={ctl_w}
             height={ctl_h}
             draw={ControlsView.control(:back_bar, "−1 bar", false, ctl_w)}
@@ -180,6 +183,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="ctl_play"
             width={ControlsView.play_size()}
             height={ControlsView.play_size()}
             draw={ControlsView.play_button(shows_pause?(assigns))}
@@ -188,6 +192,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="ctl_forward_bar"
             width={ctl_w}
             height={ctl_h}
             draw={ControlsView.control(:forward_bar, "+1 bar", false, ctl_w)}
@@ -196,6 +201,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="ctl_loop"
             width={ctl_w}
             height={ctl_h}
             draw={ControlsView.control(:loop, loop_caption(assigns.song), assigns.loop, ctl_w)}
@@ -204,6 +210,7 @@ defmodule ChoirCoach.PracticeScreen do
           />
           <Spacer />
           <Canvas
+            id="ctl_mix"
             width={ctl_w}
             height={ctl_h}
             draw={ControlsView.control(:mix, Mix.caption(assigns.mix), assigns.mix_open, ctl_w)}
@@ -250,6 +257,7 @@ defmodule ChoirCoach.PracticeScreen do
     <Column height={96} padding_left={8} padding_right={16}>
       <Row height={56} align={:center}>
         <Text
+          id="nav_back"
           text="‹"
           on_tap={back_tap}
           on_press_out={held()}
@@ -267,6 +275,7 @@ defmodule ChoirCoach.PracticeScreen do
           weight={1}
         />
         <Canvas
+          id="audio_icon"
           width={36}
           height={36}
           draw={ControlsView.headphones(36)}
@@ -301,6 +310,7 @@ defmodule ChoirCoach.PracticeScreen do
 
         ~MOB"""
         <Box
+          id={"part_#{part}"}
           background={if(selected, do: Style.accent(), else: 0x00000000)}
           corner_radius={17}
           padding_left={14}
@@ -357,6 +367,7 @@ defmodule ChoirCoach.PracticeScreen do
               weight={1}
             />
             <Box
+              id="mix_done"
               background={Style.accent()}
               corner_radius={18}
               padding_left={16}
@@ -430,6 +441,7 @@ defmodule ChoirCoach.PracticeScreen do
   defp chip(label, tap, selected) do
     ~MOB"""
     <Box
+      id={chip_id(tap)}
       background={if(selected, do: 0x40FFFFFF, else: 0x14FFFFFF)}
       corner_radius={20}
       padding_left={16}
@@ -449,6 +461,11 @@ defmodule ChoirCoach.PracticeScreen do
     </Box>
     """
   end
+
+  # Ids for the device check (`scripts/controls_check.exs`) to find chips by.
+  defp chip_id({_pid, {:preset, id}}), do: "preset_#{id}"
+  defp chip_id({_pid, :save_mix}), do: "save_mix"
+  defp chip_id(nil), do: "custom"
 
   # A whole recording plays as it is; the rows mix the part, voices and band.
   defp mix_body(_assigns, %{recording: rec}, _map_w) when rec != nil do
@@ -489,6 +506,7 @@ defmodule ChoirCoach.PracticeScreen do
       <Column gap={6}>
         <Row align={:center} gap={12}>
           <Canvas
+            id={"row_#{row.id}"}
             width={40}
             height={40}
             draw={MixView.swatch(assigns.part, row, 40)}

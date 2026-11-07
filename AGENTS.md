@@ -228,6 +228,15 @@ on pitch.
   -DSTATIC_ERLANG_NIF_LIBNAME=choir_audio -Wall -Wextra -fsyntax-only c_src/choir_audio.c`.
   The detector alone builds on the Mac: `cc -O2 -o /tmp/pitch_host
   c_src/test/pitch_host.c -lm`, fed `ffmpeg … -f f32le -` PCM.
+- `SERIAL=<serial> mix run --no-start scripts/controls_check.exs` drives
+  every practice-screen control on a connected Android phone with **real**
+  touches (`adb shell input`), for each song: play, ±1 bar while playing,
+  scrubbing, loop, the Mix sheet (preset, Done, toggle), Bass ⇄ Melody,
+  restart, pause, the Audio screen round trip, system back. It finds the
+  controls by their `id` (`Mob.Test.element_frames/1`), so any screen size
+  works. Run it after any change to the practice screen or the engine;
+  `Mob.Test.tap/2` skips the native tap path, so it can't catch lost taps.
+  Moto g power 2021: 52 of 52 steps pass.
 - `scripts/device_check.exs` plays a stretch and reports what the screen
   showed and how well the trace fits the score; `SOURCE=playback` analyses
   the track itself, `SOURCE=mic` the microphone. The phone hearing its own
