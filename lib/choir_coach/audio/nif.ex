@@ -1,8 +1,10 @@
 defmodule ChoirCoach.Audio.Nif do
   @moduledoc """
-  The `choir_audio` NIF (`c_src/choir_audio.c`), statically linked into the
-  Android app and registered through `mob.exs`'s `:static_nifs`. Use it
-  through `ChoirCoach.Audio.Native`; times here are track milliseconds.
+  The `choir_audio` NIF, statically linked into the app: on Android
+  `c_src/choir_audio.c` (`mob.exs`'s `:static_nifs`), on iOS the
+  `choir_audio_ios` plugin's Objective-C engine, with the same functions and
+  events. Use it through `ChoirCoach.Audio.Native`; times here are track
+  milliseconds.
 
   One process holds the engine at a time (`acquire/1`, `release/0`). Every
   call that plays, listens or reads answers anyone else
@@ -13,7 +15,8 @@ defmodule ChoirCoach.Audio.Nif do
   `{:choir_audio, event, payload, tag}`: `:ready` once the first seconds of
   every source are decoded, `:decoded` when all of them are, `:load_error`
   with a reason (`:not_found`, `:unsupported`, `:no_audio`, `:alloc`,
-  `:mismatched_sources`), all tagged with the load's number; and
+  `:decode_error` (the file stopped decoding part way), `:mismatched_sources`),
+  all tagged with the load's number; and
   `:mic_error` (`:disconnected` or `:input_error`) tagged with the
   listening's number from `listen/1` or `set_input/1`.
   """
@@ -42,8 +45,8 @@ defmodule ChoirCoach.Audio.Nif do
   `set_mix/1`. Listening stops.
 
   `{:ok, generation}`, `{:error, :output_stuck}` (the output stream wouldn't
-  stop: the current track stays loaded), `{:error, :thread}` or
-  `{:error, :not_owner}`. Calls are serialized.
+  stop: the current track stays loaded), `{:error, :thread}`,
+  `{:error, :alloc}` or `{:error, :not_owner}`. Calls are serialized.
   """
   def load(_sources, _guide_lane), do: :erlang.nif_error(:nif_not_loaded)
 

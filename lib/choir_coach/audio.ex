@@ -3,7 +3,8 @@ defmodule ChoirCoach.Audio do
   Playback and listening for the practice screen, behind an engine:
 
     * `ChoirCoach.Audio.Native` — the device: plays the rehearsal tracks and
-      detects the singer's pitch from the microphone (`c_src/choir_audio.c`).
+      detects the singer's pitch from the microphone (`c_src/choir_audio.c`
+      on Android, `plugins/choir_audio_ios` on iOS).
     * `ChoirCoach.Audio.Fake` — host tests: a monotonic clock and the
       scripted `ChoirCoach.FakeSinger`.
 

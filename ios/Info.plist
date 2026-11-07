@@ -54,7 +54,7 @@
         <string>remote-notification</string>
     </array>
     <key>NSMicrophoneUsageDescription</key>
-    <string>ChoirCoach uses the microphone for audio recording.</string>
+    <string>Choir Coach listens while you sing to show whether you're on the written note. Nothing is recorded or sent anywhere.</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UIApplicationSceneManifest</key>

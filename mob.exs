@@ -40,14 +40,21 @@ config :mob_dev,
   # Android ignores it. The per-window navigation needs a mob release with
   # Mob.Scene (not released yet, mob#184): keep false until then.
   multi_window: false,
-  # The audio engine (c_src/choir_audio.c) is AAudio-based: Android only.
+  # The Android audio engine (c_src/choir_audio.c: AAudio, NDK MediaCodec).
+  # iOS links the same NIF from the choir_audio_ios plugin below.
   static_nifs: [%{module: :choir_audio, archs: [:android]}]
 
 # Activated capability plugins (the packages added in mix.exs). Each contributes
 # its native code, permissions, and any demo screens at build time. Drop a name
 # here to deactivate a plugin without removing the dep; remove both to drop it
 # entirely (the native build shrinks and a clean rebuild prunes its artifacts).
-config :mob, :plugins, []
+# choir_audio_ios: the iOS audio engine (plugins/choir_audio_ios, Objective-C
+# `choir_audio` NIF + AVFoundation/AudioToolbox), part of this repo.
+config :mob, :plugins, [:choir_audio_ios]
+
+# choir_audio_ios is this app's own code, reviewed with it, so it builds
+# unsigned instead of carrying a signing key (mob_dev prints a banner).
+config :mob, :acknowledge_unsafe_plugins, [:choir_audio_ios]
 
 # Trust gate for the first-party plugins. Each is signed in CI with the shared
 # mob release key; this is that key's public fingerprint. The build refuses an

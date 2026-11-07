@@ -97,8 +97,9 @@ its tokens live in `ChoirCoach.Style`.
   which don't exist yet.
 - `ChoirCoach.Audio` — the engine contract (song-time load / play / pause /
   stop / position / mix / listen / readings, devices). `Audio.Native` wraps
-  the `choir_audio` NIF (`c_src/choir_audio.c`: AAudio playback and mic, NDK
-  decoder, YIN in `c_src/pitch_yin.c`; Android only, loaded with dlopen).
+  the `choir_audio` NIF (Android: `c_src/choir_audio.c`: AAudio playback and
+  mic, NDK decoder, YIN in `c_src/pitch_yin.c`, loaded with dlopen; iOS: the
+  same NIF in Objective-C, see "The iOS audio engine").
   `load/2` takes up to 2 files on one timeline; each kept channel is a lane,
   mixed in the output callback with per-lane L/R gains (`set_mix/2` after
   every load). Devices come from Android's `AudioManager` over JNI (Mob's
@@ -228,6 +229,57 @@ every note on pitch.
    for each voice part; `tracks/1` points at it with the rehearsal track's
    `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
+
+## The iOS audio engine
+
+`plugins/choir_audio_ios/priv/native/ios/choir_audio_ios.m` is the
+`choir_audio` NIF for iOS: same functions, return shapes, events, ownership
+and locking as `c_src/choir_audio.c` (read that for the semantics), so
+`Audio.Native` runs unchanged. RemoteIO output at the track's rate (the unit
+resamples; each buffer anchors a stream frame to when it is heard, its host
+time plus the session's output latency), AudioQueue mic input (each buffer's
+host time, less the input latency, is its capture time), ExtAudioFile
+decoding (mono and stereo MP3; a read error part way ends the load with
+`:decode_error`, as a codec error does on Android; buffers grow should a
+file outlast its stated length), `#include`s `c_src/pitch_yin.c`. As on
+Android, the mic and test mode each have their own sample ring (one
+producer each), and a seek only sets `seek_to`, which the output callback
+applies. The audio
+session is play-and-record in the default mode (RemoteIO, no voice
+processing), DefaultToSpeaker + AllowBluetoothA2DP; activated on acquire,
+play and listen, deactivated on release. An interruption pauses at the
+heard position (the next play reopens the unit) and fails a listening mic
+(`:input_error`); a route losing its device pauses, and `:disconnected` if
+the mic went with it. Devices: the current route's outputs plus the speaker
+(an override target), and the session's available inputs, with ids handed
+out per run. `set_output` can only override to the speaker (any other id:
+the system route); `set_input` sets the preferred input. Without HFP
+(which would also take music to call quality) a Bluetooth headset's mic
+isn't offered. `info/0`'s `output_xruns` is always 0.
+
+It is built as an in-repo Mob plugin, the supported way to add an
+Objective-C NIF and iOS frameworks (a project static NIF is C only): the path
+dep `{:choir_audio_ios, path: "plugins/choir_audio_ios"}`, activated in
+`mob.exs` (`:plugins`, and `:acknowledge_unsafe_plugins` since it's unsigned
+app code), manifest `priv/mob_plugin.exs` (`lang: :objc, platform: :ios`,
+AVFoundation + AudioToolbox). Its static-NIF name is `choir_audio_ios`, not
+`choir_audio`: mob_dev compiles `c_src/<name>.c` for any static NIF of that
+name, which would put the Android engine in the iOS build. The BEAM matches a
+static NIF by the module its `ERL_NIF_INIT` names
+(`Elixir.ChoirCoach.Audio.Nif`), so `load_nif(~c"choir_audio", 0)` finds it
+either way. `mix mob.deploy --native --ios --device <udid>` builds it; check
+it alone with `xcrun -sdk iphonesimulator cc -arch arm64
+-mios-simulator-version-min=17.0 -fobjc-arc -fmodules -Wall -Wextra
+-I ~/.mob/cache/otp-ios-sim-*/erts-*/include{,/aarch64-apple-iossimulator}
+-DSTATIC_ERLANG_NIF_LIBNAME=choir_audio_ios -c …/choir_audio_ios.m -o /tmp/x.o`.
+
+On the iPhone 18 Pro simulator (Mac speakers and mic):
+`SOURCE=playback scripts/device_check.exs` (NODE
+`choir_coach_ios_<udid prefix>@127.0.0.1`) fits 94% at 0 ms, 99% at −40 ms;
+the host YIN run on ffmpeg's decode (`align_track.exs`) fits best ~20 ms
+later than the score, and AudioToolbox decodes these MP3s 576 frames
+(13 ms) later than ffmpeg (it keeps the LAME encoder delay). The simulator
+can't measure the mic's latency (the Mac's speaker into its webcam mic).
 
 ## Sharing the app (Android)
 

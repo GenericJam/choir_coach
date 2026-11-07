@@ -21,6 +21,9 @@ defmodule ChoirCoach.MixProject do
   defp deps do
     [
       {:mob, "~> 0.9.26"},
+      # The iOS audio engine (the `choir_audio` NIF in Objective-C), an in-repo
+      # Mob plugin activated in mob.exs. Android builds c_src/choir_audio.c.
+      {:choir_audio_ios, path: "plugins/choir_audio_ios"},
       {:mob_dev, "~> 0.7.31", only: :dev, runtime: false},
       # `mix mob.icon --source` resizes the app icon with it (host only).
       {:image, "~> 0.54", only: :dev, runtime: false},

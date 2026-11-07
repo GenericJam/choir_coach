@@ -263,6 +263,17 @@ typedef struct {
     float song_ms, hz, confidence, rms_db;
 } reading;
 
+/* Mono samples for the analysis thread, with exactly one producer each: the
+ * input callback writes the mic ring, the output callback the test-mode
+ * ring. Switching what is analysed only changes which ring the analysis
+ * thread reads, so two producers never share a ring however listening
+ * switches (the output callback may still be mid-push from test mode when
+ * the microphone starts). */
+typedef struct {
+    float data[RING_SIZE];
+    _Atomic int64_t written; /* samples ever written */
+} sample_ring;
+
 /* Where a run of continuous playback started: stream frame ↔ track frame.
  * Atomic fields: the callback writes them while NIF calls read them. */
 typedef struct {
@@ -353,11 +364,12 @@ static struct {
      * latency (capture → analysis) seen through the timestamp path. */
     _Atomic int64_t in_ts_ok, in_ts_fallback;
     _Atomic int64_t in_latency_ns;
-    float ring[RING_SIZE];
-    _Atomic int64_t ring_written; /* samples ever written */
-    /* For SOURCE_PLAYBACK: which track frame each chunk pushed into the
-     * ring starts at, so a seek mid-listen keeps readings on the right
-     * song time. */
+    sample_ring mic_ring;
+    /* Test mode: the analysed lane, and which track frame each chunk pushed
+     * into it starts at, so a seek mid-listen keeps readings on the right
+     * song time. Written by the output callback only, never reset: every
+     * entry maps absolute ring indices. */
+    sample_ring play_ring;
     struct {
         int64_t ring_index, track_frame;
     } maps[128];
@@ -573,26 +585,36 @@ static const char *decode_source(decode_job *job) {
         return mismatch;
     }
 
-    md.codecStart(codec);
+    /* From here the buffers are the engine's (load/2 frees them), whatever
+     * happens to this decoder. A codec or extractor error ends the load
+     * with decode_error: dropping it would spin here forever, never sending
+     * decoded or load_error. */
+    const char *failure = md.codecStart(codec) == 0 ? NULL : "decode_error";
     bool input_done = false;
     int out_channels = channels;
     int64_t written = 0;
 
-    while (job_live(job)) {
+    while (!failure && job_live(job)) {
         if (!input_done) {
             ssize_t in = md.codecDequeueInputBuffer(codec, 5000);
             if (in >= 0) {
                 size_t size = 0;
                 uint8_t *buf = md.codecGetInputBuffer(codec, (size_t)in, &size);
-                ssize_t n = md.exReadSampleData(ex, buf, size);
-                if (n < 0) {
-                    md.codecQueueInputBuffer(codec, (size_t)in, 0, 0, 0, CODEC_EOS);
+                ssize_t n = buf ? md.exReadSampleData(ex, buf, size) : -1;
+                int queued;
+                if (n < 0) { /* the end of the track */
+                    queued = md.codecQueueInputBuffer(codec, (size_t)in, 0, 0, 0, CODEC_EOS);
                     input_done = true;
                 } else {
-                    md.codecQueueInputBuffer(codec, (size_t)in, 0, (size_t)n, (uint64_t)md.exGetSampleTime(ex), 0);
+                    queued = md.codecQueueInputBuffer(codec, (size_t)in, 0, (size_t)n,
+                                                      (uint64_t)md.exGetSampleTime(ex), 0);
                     md.exAdvance(ex);
                 }
+                if (!buf || queued != 0) failure = "decode_error";
+            } else if (in != CODEC_TRY_AGAIN) {
+                failure = "decode_error";
             }
+            if (failure) break;
         }
 
         codec_buffer_info info;
@@ -603,10 +625,19 @@ static const char *decode_source(decode_job *job) {
             md.fmtDelete(f);
             continue;
         }
-        if (out < 0) continue;
+        if (out == CODEC_TRY_AGAIN || out == CODEC_BUFFERS_CHANGED) continue;
+        if (out < 0) {
+            failure = "decode_error";
+            break;
+        }
 
         size_t size = 0;
         uint8_t *buf = md.codecGetOutputBuffer(codec, (size_t)out, &size);
+        if (!buf) {
+            md.codecReleaseOutputBuffer(codec, (size_t)out, false);
+            failure = "decode_error";
+            break;
+        }
         const int16_t *samples = (const int16_t *)(buf + info.offset);
         int stride = out_channels > 0 ? out_channels : 1;
         int64_t frames = info.size / (int64_t)(sizeof(int16_t) * stride);
@@ -630,6 +661,10 @@ static const char *decode_source(decode_job *job) {
     md.codecDelete(codec);
     md.exDelete(ex);
     close(fd);
+    if (failure) {
+        LOGE("source %d: decoding failed after %lld frames", job->index, (long long)written);
+        return failure;
+    }
 
     if (job_live(job)) {
         atomic_store(&src->done, true);
@@ -718,21 +753,23 @@ static bool stop_and_close(AAudioStream **s) {
     return true;
 }
 
-static void ring_push(const float *x, int n) {
-    int64_t w = atomic_load_explicit(&E.ring_written, memory_order_relaxed);
-    for (int i = 0; i < n; i++) E.ring[(w + i) & (RING_SIZE - 1)] = x[i];
-    atomic_store_explicit(&E.ring_written, w + n, memory_order_release);
+/* Only the ring's one producer calls this. */
+static void ring_push(sample_ring *ring, const float *x, int n) {
+    int64_t w = atomic_load_explicit(&ring->written, memory_order_relaxed);
+    for (int i = 0; i < n; i++) ring->data[(w + i) & (RING_SIZE - 1)] = x[i];
+    atomic_store_explicit(&ring->written, w + n, memory_order_release);
 }
 
 /* Test mode: `n` samples of the analysed lane starting at track frame
- * `track_frame`, with the map entry that places them on the song. */
+ * `track_frame`, with the map entry that places them on the song. Output
+ * callback only. */
 static void push_playback(const float *x, int n, int64_t track_frame) {
     if (n == 0) return;
     int64_t m = atomic_load_explicit(&E.maps_written, memory_order_relaxed);
-    E.maps[m & 127].ring_index = atomic_load_explicit(&E.ring_written, memory_order_relaxed);
+    E.maps[m & 127].ring_index = atomic_load_explicit(&E.play_ring.written, memory_order_relaxed);
     E.maps[m & 127].track_frame = track_frame;
     atomic_store_explicit(&E.maps_written, m + 1, memory_order_release);
-    ring_push(x, n);
+    ring_push(&E.play_ring, x, n);
 }
 
 static float clamp_sample(float x) { return x > 1.0f ? 1.0f : x < -1.0f ? -1.0f : x; }
@@ -740,13 +777,19 @@ static float clamp_sample(float x) { return x > 1.0f ? 1.0f : x < -1.0f ? -1.0f 
 static int32_t output_cb(AAudioStream *s, void *user, void *data, int32_t frames) {
     (void)user;
     float *out = data;
-    int64_t seek = atomic_exchange(&E.seek_to, -1);
     int64_t frame = atomic_load(&E.play_frame);
     int64_t stream_frame = aa.getFramesWritten(s);
 
+    /* A seek (start_at only sets seek_to, so while the stream runs this is
+     * the one place play_frame moves): play from it, mark the new segment,
+     * then clear it, unless a newer seek came meanwhile, which the next
+     * callback applies. Position reads report the target until the segment
+     * is in. */
+    int64_t seek = atomic_load(&E.seek_to);
     if (seek >= 0) {
         frame = seek;
         write_segment(stream_frame, frame);
+        atomic_compare_exchange_strong(&E.seek_to, &seek, -1);
     }
     /* Test mode's analysed samples, pushed a chunk at a time: callbacks may
      * be any size. Frames only stop advancing at the end of what's decoded,
@@ -869,9 +912,11 @@ static bool close_output(void) {
     return closed;
 }
 
-/* Play from track frame `frame` on the open output stream. */
+/* Play from track frame `frame` on the open output stream. Only seek_to
+ * says where: the callback moves play_frame when it applies it, so a
+ * callback running meanwhile (a restart or ±bar while playing) never plays
+ * from the new frame without its segment, nor plays a buffer twice. */
 static aaudio_result_t start_at(int64_t frame) {
-    atomic_store(&E.play_frame, frame);
     atomic_store(&E.seek_to, frame);
     atomic_store(&E.paused_track_frame, frame);
     /* Already running (a restart or seek while playing): the callback picks
@@ -956,9 +1001,9 @@ static int32_t input_cb(AAudioStream *s, void *user, void *data, int32_t frames)
     if (atomic_load(&E.source) != SOURCE_MIC || atomic_load(&E.in_failed)) return AA_CALLBACK_CONTINUE;
     if (atomic_load(&E.in_base_ring) < 0) {
         atomic_store(&E.in_base_frame, aa.getFramesRead(s));
-        atomic_store(&E.in_base_ring, atomic_load(&E.ring_written));
+        atomic_store(&E.in_base_ring, atomic_load(&E.mic_ring.written));
     }
-    ring_push((const float *)data, frames);
+    ring_push(&E.mic_ring, (const float *)data, frames);
     return AA_CALLBACK_CONTINUE;
 }
 
@@ -988,23 +1033,24 @@ static void *analysis_main(void *arg) {
     (void)arg;
     int source = atomic_load(&E.source);
     int rate = source == SOURCE_MIC ? E.in_rate : E.sample_rate;
+    sample_ring *ring = source == SOURCE_MIC ? &E.mic_ring : &E.play_ring;
     pitch_detector *p = pitch_new(rate, 60.0f, 600.0f);
     if (!p) return NULL;
 
     int hop = rate / 100;
     float *chunk = malloc(sizeof(float) * hop);
-    int64_t read = atomic_load(&E.ring_written);
+    int64_t read = atomic_load(&ring->written);
     int64_t consumed = 0;
     int half_window = pitch_window_input_samples(p) / 2;
 
     while (atomic_load(&E.analysis_run)) {
-        int64_t written = atomic_load_explicit(&E.ring_written, memory_order_acquire);
+        int64_t written = atomic_load_explicit(&ring->written, memory_order_acquire);
         if (written - read > RING_SIZE) read = written - hop; /* fell behind: skip ahead */
         if (written - read < hop) {
             usleep(4000);
             continue;
         }
-        for (int i = 0; i < hop; i++) chunk[i] = E.ring[(read + i) & (RING_SIZE - 1)];
+        for (int i = 0; i < hop; i++) chunk[i] = ring->data[(read + i) & (RING_SIZE - 1)];
         read += hop;
         consumed += hop;
         pitch_push(p, chunk, hop);
@@ -1108,7 +1154,8 @@ static const char *start_listening_locked(int source) {
             return "microphone_unavailable";
         }
     }
-    atomic_store(&E.maps_written, 0);
+    /* maps_written is the output callback's alone (see play_ring); the input
+     * stream, in_base_ring's writer, hasn't started. */
     atomic_store(&E.in_base_ring, -1);
     atomic_store(&E.source, source);
     pthread_mutex_lock(&E.readings_lock);

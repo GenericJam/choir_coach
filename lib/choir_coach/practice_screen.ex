@@ -113,9 +113,14 @@ defmodule ChoirCoach.PracticeScreen do
   def render(assigns) do
     sa = Map.get(assigns, :safe_area, %{top: 0.0, bottom: 0.0})
     progress_w = progress_width(assigns)
-    # Restart, −1 bar, +1 bar, loop and Mix share the row with play.
-    ctl_w = ControlsView.control_width(assigns.screen_w - 2 * 24, 5)
+    # Restart, −1 bar, +1 bar, loop and Mix share the row with play, with
+    # fixed gaps between them: a flexible Spacer keeps a minimum width on iOS
+    # (~8 pt), so five of them overflowed the row and iOS centred it,
+    # cutting off the left edge of the whole screen.
+    row_w = assigns.screen_w - 2 * 24
+    ctl_w = ControlsView.control_width(row_w, 5)
     ctl_h = ControlsView.size()
+    gap = max(Float.floor((row_w - 5 * ctl_w - ControlsView.play_size()) / 5 * 1.0, 1), 0.0)
 
     frame = %{
       song: assigns.song,
@@ -173,7 +178,7 @@ defmodule ChoirCoach.PracticeScreen do
             on_tap={restart}
             on_press_out={held()}
           />
-          <Spacer />
+          <Spacer size={gap} />
           <Canvas
             id="ctl_back_bar"
             width={ctl_w}
@@ -182,7 +187,7 @@ defmodule ChoirCoach.PracticeScreen do
             on_tap={back}
             on_press_out={held()}
           />
-          <Spacer />
+          <Spacer size={gap} />
           <Canvas
             id="ctl_play"
             width={ControlsView.play_size()}
@@ -191,7 +196,7 @@ defmodule ChoirCoach.PracticeScreen do
             on_tap={play}
             on_press_out={held()}
           />
-          <Spacer />
+          <Spacer size={gap} />
           <Canvas
             id="ctl_forward_bar"
             width={ctl_w}
@@ -200,7 +205,7 @@ defmodule ChoirCoach.PracticeScreen do
             on_tap={forward}
             on_press_out={held()}
           />
-          <Spacer />
+          <Spacer size={gap} />
           <Canvas
             id="ctl_loop"
             width={ctl_w}
@@ -209,7 +214,7 @@ defmodule ChoirCoach.PracticeScreen do
             on_tap={loop}
             on_press_out={held()}
           />
-          <Spacer />
+          <Spacer size={gap} />
           <Canvas
             id="ctl_mix"
             width={ctl_w}
@@ -925,8 +930,19 @@ defmodule ChoirCoach.PracticeScreen do
     end
   end
 
-  defp audio_event({:choir_audio, :load_error, reason, _load}, socket),
-    do: Mob.Socket.assign(socket, :audio_status, {:error, reason})
+  # The track can't play: before it was ready, or part way through decoding
+  # (`:decode_error` can follow `:ready`), so stop whatever had started:
+  # playback, the frame tick, keep-awake and the microphone.
+  defp audio_event({:choir_audio, :load_error, reason, _load}, socket) do
+    socket = pause(socket)
+    a = socket.assigns
+
+    Mob.Socket.assign(socket,
+      audio: a.engine.stop_listening(a.audio),
+      listening: :off,
+      audio_status: {:error, reason}
+    )
+  end
 
   defp audio_event({:choir_audio, :decoded, _info, _load}, socket), do: socket
 

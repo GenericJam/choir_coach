@@ -103,6 +103,10 @@ true = Node.connect(node)
 
 ctx = %{serial: serial, node: node, scale: Check.scale(serial, node)}
 
+# A fresh native install resets the microphone permission, and Android's
+# prompt would sit over the controls and take the first song's taps.
+Check.adb(serial, ["shell", "pm", "grant", "com.example.choir_coach", "android.permission.RECORD_AUDIO"])
+
 # Back to the song list, whatever screen the app is on.
 for _ <- 1..3, Mob.Test.screen(node) != ChoirCoach.SongsScreen do
   Mob.Test.tap(node, :back)

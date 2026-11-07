@@ -390,6 +390,19 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert PracticeScreen.subtitle(assigns(view)) =~ "Can't play"
   end
 
+  test "a track that breaks while playing stops: playback, the frame loop and the microphone" do
+    playing = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
+    assert {assigns(playing).playing, assigns(playing).listening} == {true, :mic}
+
+    broken = render_info(playing, event(playing, :load_error, :decode_error))
+    a = assigns(broken)
+
+    assert {a.playing, a.listening, a.tick_timer, a.audio.playing, a.audio.source} ==
+             {false, :off, nil, false, nil}
+
+    assert PracticeScreen.subtitle(a) =~ "Can't play"
+  end
+
   describe "while the Audio screen has the engine" do
     test "the practice screen leaves it alone: its old load's events and frame ticks do nothing" do
       playing = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
