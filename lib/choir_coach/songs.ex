@@ -14,10 +14,19 @@ defmodule ChoirCoach.Songs do
   @spec all() :: [module()]
   def all, do: @modules
 
-  @doc "A song's parts, in order: each part's name with its song and tracks."
+  @doc """
+  A song's parts, in order: each part's name with its song and tracks. Parts
+  other than the melody have each phrase marked as following the melody or
+  not (`ChoirCoach.Roles`).
+  """
   @spec parts(module()) :: keyword(%{song: ChoirCoach.Song.t(), tracks: map()})
   def parts(module) do
-    for part <- module.parts(),
-        do: {part, %{song: apply(module, part, []), tracks: module.tracks(part)}}
+    melody = if :melody in module.parts(), do: module.melody()
+
+    for part <- module.parts() do
+      song = apply(module, part, [])
+      song = if melody && part != :melody, do: ChoirCoach.Roles.mark(song, melody), else: song
+      {part, %{song: song, tracks: module.tracks(part)}}
+    end
   end
 end

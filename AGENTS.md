@@ -67,6 +67,13 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
   headphones icon; `ChoirCoach.MixView` the mix sheet's swatches and ear map.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
   wording, following the handoff's motion rules.
+- `ChoirCoach.Roles` — marks each phrase of a non-melody part (a run of
+  notes without a rest of a beat or more) as `:melody` when at least 75% of
+  its sounding time matches the melody's pitch class (an octave down
+  counts), else `:part`. `Songs.parts/1` applies it; the practice screen
+  tags the phrase being sung, or the next one, "Melody" (sing with
+  everyone) or "Part" (your own line). It depends on the melody
+  transcription, so fix a wrong tag there, not here.
 - `ChoirCoach.Mix` — pure: what the singer hears. A part's sources are rows
   (`:part_piano` (bass only), `:voices` (the part's rehearsal track, left),
   `:band` (its right)), each with on, level 0–100 and balance −100…100;

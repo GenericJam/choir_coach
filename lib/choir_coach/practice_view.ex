@@ -19,7 +19,7 @@ defmodule ChoirCoach.PracticeView do
 
   import Mob.Canvas
 
-  alias ChoirCoach.{Feedback, Pitch, Song, Style}
+  alias ChoirCoach.{Feedback, Pitch, Roles, Song, Style}
 
   @type sample :: {integer() | float(), float() | nil, float()}
 
@@ -932,19 +932,21 @@ defmodule ChoirCoach.PracticeView do
     lyric_y = pill_y + 32 + 10
     max_w = g.playhead_x - x - 10
 
-    case {frame.feedback.status, Song.note_at(frame.song, frame.t_ms)} do
-      {:breathe, _} -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
-      {_status, nil} -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
-      {status, note} -> singing_cluster(status, note, frame.feedback, x, pill_y, lyric_y, max_w)
+    # "Breathe" belongs to rests. During a written note with nothing heard,
+    # the note stays up with a neutral "Sing".
+    case Song.note_at(frame.song, frame.t_ms) do
+      nil -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
+      note -> singing_cluster(frame.feedback, note, x, pill_y, lyric_y, max_w)
     end
   end
 
-  defp singing_cluster(status, note, feedback, x, pill_y, lyric_y, max_w) do
-    color = Style.cents_color(feedback.color_cents)
+  defp singing_cluster(feedback, note, x, pill_y, lyric_y, max_w) do
+    {label, icon, color} = note_status(feedback)
     size = fit_size(display_lyric(note.lyric), Style.type(:active_lyric), max_w)
 
     [
-      status_pill(x, pill_y, status_label(status), status_icon(status), color),
+      status_pill(x, pill_y, label, icon, color),
+      role_tag(x + pill_width(label) + 8, pill_y + 4, note.role),
       text(x, lyric_y, display_lyric(note.lyric),
         color: Style.text_primary(),
         size: size,
@@ -959,7 +961,10 @@ defmodule ChoirCoach.PracticeView do
   end
 
   defp breathe_cluster(frame, x, pill_y, lyric_y, max_w) do
-    pill = status_pill(x, pill_y, "Breathe", :dashes, Style.neutral())
+    pill = [
+      status_pill(x, pill_y, "Breathe", :dashes, Style.neutral()),
+      role_tag(x + pill_width("Breathe") + 8, pill_y + 4, Roles.at(frame.song, frame.t_ms))
+    ]
 
     case Song.next_note(frame.song, frame.t_ms) do
       nil ->
@@ -1000,30 +1005,76 @@ defmodule ChoirCoach.PracticeView do
     y = @strip_height + 6
 
     {label, icon, color, note, prefix} =
-      case {frame.feedback.status, Song.note_at(frame.song, frame.t_ms)} do
-        {status, note} when status != :breathe and note != nil ->
-          c = Style.cents_color(frame.feedback.color_cents)
-          {status_label(status), status_icon(status), c, note, nil}
-
-        _ ->
+      case Song.note_at(frame.song, frame.t_ms) do
+        nil ->
           {"Breathe", :dashes, Style.neutral(), Song.next_note(frame.song, frame.t_ms), "Next"}
+
+        note ->
+          {label, icon, color} = note_status(frame.feedback)
+          {label, icon, color, note, nil}
       end
 
     pill_w = pill_width(label)
     lyric_x = x + pill_w + 14
 
+    role = Roles.at(frame.song, frame.t_ms)
+    tag_x = frame.width - x - role_tag_width(role)
+
     List.flatten([
       status_pill(x, y, label, icon, color),
-      status_note(prefix, note, lyric_x, y)
+      status_note(prefix, note, lyric_x, y, tag_x - 8),
+      role_tag(tag_x, y + 4, role)
     ])
   end
 
-  defp status_note(_prefix, nil, _x, _y), do: []
+  # The pill during a written note: how close the singing is, or "Sing"
+  # while nothing confident is heard now (the wording itself is held a
+  # moment, so silence is read from the current reading).
+  defp note_status(%Feedback{cents: nil}), do: {"Sing", :dashes, Style.neutral()}
+  defp note_status(%Feedback{status: :breathe}), do: {"Sing", :dashes, Style.neutral()}
 
-  defp status_note(prefix, note, x, y) do
+  defp note_status(%Feedback{status: status, color_cents: c}),
+    do: {status_label(status), status_icon(status), Style.cents_color(c)}
+
+  # Whether this phrase is the tune (sing with everyone) or the part's own
+  # line; nothing on the melody itself.
+  defp role_tag(_x, _y, nil), do: []
+
+  defp role_tag(x, y, role) do
+    label = role_label(role)
+    color = if role == :melody, do: Style.swatch(:melody), else: Style.swatch(:bass)
+    w = role_tag_width(role)
+
+    [
+      rect(x, y, w, 24, color: color, fill: true, radius: 12, opacity: Style.alpha(:status_pill)),
+      rect(x, y, w, 24, color: color, width: 1, radius: 12, opacity: 0.7),
+      text(x + 10, y + 5, label, color: color, size: Style.type(:subtitle), weight: :bold)
+    ]
+  end
+
+  defp role_tag_width(nil), do: 0
+  defp role_tag_width(role), do: text_width(role_label(role), Style.type(:subtitle)) + 20
+
+  @doc "The tag for a phrase's role."
+  @spec role_label(:melody | :part) :: String.t()
+  def role_label(:melody), do: "Melody"
+  def role_label(:part), do: "Part"
+
+  defp status_note(_prefix, nil, _x, _y, _max_x), do: []
+
+  # Lyric then note name, kept left of `max_x` (the role tag): the lyric
+  # shrinks to 14 pt; past that the note name is dropped and the lyric
+  # alone is fitted, so nothing runs into the tag on narrow phones.
+  defp status_note(prefix, note, x, y, max_x) do
     lyric = display_lyric(note.lyric)
-    lyric_size = 26
+    name = Pitch.display(note.name)
     lead = if prefix, do: 40, else: 0
+    room = max_x - x - lead
+    with_name = fit_compact(lyric, room - text_width(name, 20) - 12)
+
+    {lyric_size, name} =
+      if with_name >= 14, do: {with_name, name}, else: {fit_compact(lyric, room), nil}
+
     name_x = x + lead + text_width(lyric, lyric_size) + 12
 
     [
@@ -1037,26 +1088,29 @@ defmodule ChoirCoach.PracticeView do
         else: []
       ),
       text(x + lead, y + 1, lyric, color: Style.text_primary(), size: lyric_size, weight: :bold),
-      text(name_x, y + 5, Pitch.display(note.name),
-        color: Style.text_secondary(),
-        size: 20,
-        weight: :bold
+      if(name,
+        do: text(name_x, y + 5, name, color: Style.text_secondary(), size: 20, weight: :bold),
+        else: []
       )
     ]
   end
 
-  @doc "Status pill wording for a feedback status."
-  @spec status_label(Feedback.status()) :: String.t()
+  # The compact lyric's size: 26 pt when it fits in `room`, else whatever does.
+  defp fit_compact(lyric, room) do
+    full = text_width(lyric, 26)
+    if full <= room, do: 26, else: max(floor(26 * room / full), 1)
+  end
+
+  @doc "Status pill wording while a note is heard (`note_status/1` covers silence)."
+  @spec status_label(:on_pitch | {:low | :high, :slightly | :far}) :: String.t()
   def status_label(:on_pitch), do: "On pitch"
   def status_label({:low, :slightly}), do: "A little low"
   def status_label({:high, :slightly}), do: "A little high"
   def status_label({:low, :far}), do: "Low"
   def status_label({:high, :far}), do: "High"
-  def status_label(:breathe), do: "Breathe"
 
   defp status_icon(:on_pitch), do: :check
   defp status_icon({dir, amount}), do: {dir, amount}
-  defp status_icon(:breathe), do: :dashes
 
   defp pill_width(label), do: 14 + 16 + 8 + text_width(label, Style.type(:status)) + 16
 

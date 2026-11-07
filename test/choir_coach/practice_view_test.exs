@@ -64,4 +64,54 @@ defmodule ChoirCoach.PracticeViewTest do
     # Bass F♯ sits on the F3 line (second from the top), treble on the top line.
     assert first_sharp(treble).y - top == first_sharp(bass).y - f_line
   end
+
+  defp texts_at(song, t, feedback \\ Feedback.new()) do
+    PracticeView.ops(%{
+      song: song,
+      t_ms: t,
+      width: 400.0,
+      height: 800.0,
+      semitone: 40.0,
+      center_midi: 50.0,
+      trace: [],
+      feedback: feedback,
+      now_ms: round(t)
+    })
+    |> List.flatten()
+    |> Enum.flat_map(fn
+      %{op: :text, text: s} -> [s]
+      _ -> []
+    end)
+  end
+
+  test "Breathe only in rests; a note sung unheard says Sing; the phrase's role is tagged" do
+    song =
+      Song.build(
+        title: "Test",
+        clef: :bass,
+        tempo_bpm: 60,
+        beats_per_bar: 4,
+        first_bar: 1,
+        bars: [[n: {"C3", 2, "Glo-"}, rest: 2], [n: {"G2", 4, "night"}]]
+      )
+
+    [first, second] = song.notes
+    song = %{song | notes: [%{first | role: :melody}, %{second | role: :part}]}
+
+    during = texts_at(song, 500.0)
+    assert "Sing" in during and PracticeView.display_lyric("Glo-") in during
+    assert "Melody" in during
+    refute "Breathe" in during
+
+    rest = texts_at(song, 2_500.0)
+    assert "Breathe" in rest and "Next" in rest and "Part" in rest
+
+    heard = Feedback.update(Feedback.new(), 0.0, 500)
+    assert "On pitch" in texts_at(song, 500.0, heard)
+
+    # The wording is held a moment, but silence shows at once.
+    gone = Feedback.update(heard, nil, 600)
+    assert gone.status == :on_pitch
+    assert "Sing" in texts_at(song, 600.0, gone)
+  end
 end

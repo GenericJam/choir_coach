@@ -44,6 +44,9 @@ defmodule ChoirCoach.Song do
     its spelling: `name` as written, `step` (staff position of its letter,
     see `ChoirCoach.Pitch.staff_step/1`) and the `accidental` the staff
     prints (nil when the key signature or an earlier note in the bar covers it).
+    `role` says whether a part other than the melody is singing the tune in
+    this phrase (`:melody`) or its own line (`:part`); nil on the melody
+    itself. `ChoirCoach.Roles` sets it.
     """
     @enforce_keys [:start_ms, :dur_ms, :midi, :lyric, :bar, :beats, :name, :step]
     defstruct [
@@ -56,6 +59,7 @@ defmodule ChoirCoach.Song do
       :name,
       :step,
       :accidental,
+      :role,
       slur: false
     ]
 
@@ -69,6 +73,7 @@ defmodule ChoirCoach.Song do
             name: String.t(),
             step: integer(),
             accidental: nil | :sharp | :flat | :natural,
+            role: nil | :melody | :part,
             slur: boolean()
           }
   end
