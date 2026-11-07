@@ -45,11 +45,15 @@ defmodule ChoirCoach.Style do
   def surface_raised, do: 0xFF1E252E
 
   @doc """
-  Mix swatch colours: the part's (bass a warm tan, the melody a soft rose)
-  and the band's grey. Like the UI accent they sit outside the pitch scale,
-  so a swatch can't be read as pitch feedback.
+  Mix swatch colours: each part's (bass a warm tan, tenor a sage, alto a
+  lavender, soprano a sky blue, the melody a soft rose) and the band's grey.
+  Like the UI accent they sit outside the pitch scale, so a swatch can't be
+  read as pitch feedback.
   """
   def swatch(:bass), do: 0xFFE2BE8C
+  def swatch(:tenor), do: 0xFFB5D3B0
+  def swatch(:alto), do: 0xFFCBB8E6
+  def swatch(:soprano), do: 0xFFAFCBEA
   def swatch(:melody), do: 0xFFE3B2A4
   def swatch(:band), do: 0xFFAEB7C2
 

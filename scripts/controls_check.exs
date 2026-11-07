@@ -109,6 +109,18 @@ for _ <- 1..3, Mob.Test.screen(node) != ChoirCoach.SongsScreen do
   Process.sleep(700)
 end
 
+# The singer's part (PART=soprano|alto|tenor|bass, default bass), picked on
+# the song list with a real tap; every song then opens on it.
+mine = String.to_existing_atom(System.get_env("PART", "bass"))
+IO.puts("== Your part: #{mine}")
+
+picked =
+  Check.step("the song list remembers the part picked", fn ->
+    Check.tap(ctx, "my_part_#{mine}")
+    Check.until(ctx, 1_500, &(&1.my_part == mine)) and
+      :rpc.call(node, ChoirCoach.Settings, :my_part, []) == mine
+  end)
+
 results =
   for mod <- Songs.all() do
     title = mod.bass().title
@@ -116,9 +128,14 @@ results =
     Mob.Test.tap(node, {:open, mod})
 
     steps = [
-      {"loads",
+      {"loads, on my part",
        fn ->
-         Check.until(ctx, 10_000, &(Mob.Test.screen(node) == ChoirCoach.PracticeScreen and &1.audio_status == :ready))
+         Check.until(
+           ctx,
+           10_000,
+           &(Mob.Test.screen(node) == ChoirCoach.PracticeScreen and &1.audio_status == :ready and
+               &1.part == mine)
+         )
        end},
       {"play starts playback (real tap)",
        fn ->
@@ -188,17 +205,18 @@ results =
              Check.until(ctx, 1_500, &(not &1.mix_open))
            )
        end},
-      {"Melody and back to Bass, playing on at the same place",
+      {"Melody and back to my part, playing on at the same place",
        fn ->
-         t = Check.a(ctx).t_ms
+         s0 = Check.a(ctx)
+         {t, mine} = {s0.t_ms, s0.part}
          Check.tap(ctx, "part_melody")
          melody = Check.until(ctx, 5_000, &(&1.part == :melody and &1.playing))
-         Check.tap(ctx, "part_bass")
-         bass = Check.until(ctx, 5_000, &(&1.part == :bass and &1.playing))
+         Check.tap(ctx, "part_#{mine}")
+         back = Check.until(ctx, 5_000, &(&1.part == mine and &1.playing))
          s = Check.a(ctx)
 
-         (melody and bass and abs(s.t_ms - t) < 8_000) or
-           {:error, "melody=#{melody} bass=#{bass} moved #{round(s.t_ms - t)} ms"}
+         (melody and back and abs(s.t_ms - t) < 8_000) or
+           {:error, "melody=#{melody} #{mine}=#{back} moved #{round(s.t_ms - t)} ms"}
        end},
       {"restart goes back to the start",
        fn ->
@@ -241,6 +259,7 @@ results =
     for {name, fun} <- steps, do: Check.step(name, fun)
   end
 
-failed = results |> List.flatten() |> Enum.count(&(&1 == :fail))
-IO.puts("\n#{length(List.flatten(results)) - failed} passed, #{failed} failed")
+all = List.flatten([picked | results])
+failed = Enum.count(all, &(&1 == :fail))
+IO.puts("\n#{length(all) - failed} passed, #{failed} failed")
 if failed > 0, do: System.halt(1)

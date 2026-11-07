@@ -76,7 +76,8 @@ defmodule ChoirCoach.MixTest do
 
     test "Me in right ear puts the part right and the band left" do
       mix = Mix.apply_preset(Mix.new(:bass, @bass), :right_ear)
-      assert Mix.caption(mix) == "Me in right ear"
+      # The transport's caption is short: it must fit a 48 dp control.
+      assert Mix.caption(mix) == "Right ear"
       assert %{on: true, level: 75, balance: 80} = row(mix, :part_piano)
       assert %{on: true, level: 60, balance: -60} = row(mix, :band)
       assert Mix.value_label(row(mix, :part_piano), false) == "75 · R 80"

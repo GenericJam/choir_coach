@@ -13,7 +13,7 @@ defmodule ChoirCoach.PracticeScreen do
   status line stay live): presets, each source's level and balance, and the
   ear map. Dragging the progress track scrubs: playback pauses while the
   finger moves and plays on from where it's let go.
-  The header's Bass | Melody switch changes the part at the same song time;
+  The header's switch (the singer's part | Melody) changes the part at the same song time;
   the headphones icon opens `ChoirCoach.AudioScreen`.
   """
 
@@ -53,7 +53,8 @@ defmodule ChoirCoach.PracticeScreen do
   @retry_ms 500
 
   def mount(params, _session, socket) do
-    # `parts`: each part's song and tracks, in order (`ChoirCoach.Songs.parts/1`).
+    # `parts`: the singer's part and the melody, each with its song and
+    # tracks (`ChoirCoach.Songs.parts/2`).
     parts = Map.fetch!(params, :parts)
     part = Map.get(params, :part, parts |> hd() |> elem(0))
     %{song: song, tracks: tracks} = Keyword.fetch!(parts, part)
@@ -300,8 +301,8 @@ defmodule ChoirCoach.PracticeScreen do
     """
   end
 
-  # Bass | Melody as a segmented control: both options visible, the current
-  # one filled with the UI accent.
+  # The singer's part | Melody as a segmented control: both options visible,
+  # the current one filled with the UI accent.
   defp part_switch(assigns) do
     segments =
       for {part, _} <- assigns.parts do

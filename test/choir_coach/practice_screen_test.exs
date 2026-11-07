@@ -8,11 +8,11 @@ defmodule ChoirCoach.PracticeScreenTest do
 
   @params %{
     screen: {411.0, 914.0},
-    parts: Songs.parts(GloriousNight)
+    parts: Songs.parts(GloriousNight, :bass)
   }
 
   setup do
-    for part <- [:bass, :melody],
+    for part <- [:soprano, :alto, :tenor, :bass, :melody],
         do: Mob.State.delete({:mix, part}) && Mob.State.delete({:saved_mix, part})
 
     for key <- ["bluetooth:WH-1000XM4", "speaker:Pixel 8"],
@@ -44,6 +44,37 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert assigns(view).listening == :mic
     refute assigns(view).playing
     assert_renderable(view)
+  end
+
+  test "each voice part opens with its own piano and rehearsal track, and switches to the melody and back" do
+    for part <- ChoirCoach.Settings.voice_parts() do
+      view =
+        PracticeScreen
+        |> mount_screen(%{@params | parts: Songs.parts(GloriousNight, part)})
+        |> ready()
+
+      a = assigns(view)
+      name = part |> Atom.to_string() |> String.capitalize()
+      assert a.part == part
+
+      # Its piano (left) and its rehearsal track (voices left, band right), as lanes.
+      assert Enum.map(a.mix.rows, & &1.label) == ["#{name} on piano", "#{name} rehearsal", "Band"]
+
+      assert Enum.map(a.audio.spec.sources, & &1.file) == [
+               a.tracks.piano.file,
+               a.tracks.rehearsal.file
+             ]
+
+      assert a.tracks.piano.file =~ "piano_#{part}.mp3"
+
+      playing = view |> put_time(40_000.0) |> render_info({:tap, :play_pause})
+      melody = playing |> render_info({:tap, {:part, :melody}}) |> ready()
+      assert {assigns(melody).part, assigns(melody).playing} == {:melody, true}
+
+      back = melody |> render_info({:tap, {:part, part}}) |> ready()
+      assert {assigns(back).part, assigns(back).playing} == {part, true}
+      assert_in_delta assigns(back).t_ms, 40_000.0, 100
+    end
   end
 
   test "restart while playing keeps a single frame loop" do
@@ -209,7 +240,7 @@ defmodule ChoirCoach.PracticeScreenTest do
 
     right = render_info(view, {:tap, {:preset, :right_ear}})
     a = assigns(right)
-    assert {a.audio_status, a.playing, Mix.caption(a.mix)} == {:ready, true, "Me in right ear"}
+    assert {a.audio_status, a.playing, a.mix.preset} == {:ready, true, :right_ear}
     assert a.audio.gains == Mix.lane_gains(a.mix, a.mono)
 
     choir = render_info(right, {:tap, {:preset, :full_choir}})
@@ -273,10 +304,10 @@ defmodule ChoirCoach.PracticeScreenTest do
     |> render_info({:tap, {:preset, :right_ear}})
     |> render_info({:tap, :mix})
 
-    assert Mix.caption(assigns(mount_screen(PracticeScreen, @params)).mix) == "Me in right ear"
+    assert assigns(mount_screen(PracticeScreen, @params)).mix.preset == :right_ear
   end
 
-  test "Bass | Melody switches the part at the same place, with that part's sources" do
+  test "switching to the melody keeps the place, with the melody's sources" do
     view = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
     bass_center = assigns(view).center_midi
 

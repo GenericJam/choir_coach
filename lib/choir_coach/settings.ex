@@ -13,6 +13,9 @@ defmodule ChoirCoach.Settings do
 
   **Mixes** (`mix/1`, `saved_mix/1`), per part: the mix last used and the
   singer's saved "My mix" (`ChoirCoach.Mix` maps), or nil.
+
+  **My part** (`my_part/0`): the voice part this singer practises (soprano,
+  alto, tenor or bass), opened with the melody beside it.
   """
 
   @min 0
@@ -133,6 +136,24 @@ defmodule ChoirCoach.Settings do
     :ok = Mob.State.put({:saved_mix, part}, mix)
     mix
   end
+
+  @voice_parts [:soprano, :alto, :tenor, :bass]
+
+  @doc "The voice parts a singer can sing, top down."
+  @spec voice_parts() :: [atom()]
+  def voice_parts, do: @voice_parts
+
+  @doc "The part this singer sings (picked on the song list); bass until they pick."
+  @spec my_part() :: atom()
+  def my_part do
+    case Mob.State.get(:my_part) do
+      part when part in @voice_parts -> part
+      _ -> :bass
+    end
+  end
+
+  @spec put_my_part(atom()) :: :ok
+  def put_my_part(part) when part in @voice_parts, do: Mob.State.put(:my_part, part)
 
   # Headphones fall back to the single delay the previous version saved
   # (`:mic_delay_ms`), which the singer set for their headphones.

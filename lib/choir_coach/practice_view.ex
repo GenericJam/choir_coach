@@ -936,17 +936,17 @@ defmodule ChoirCoach.PracticeView do
     # the note stays up with a neutral "Sing".
     case Song.note_at(frame.song, frame.t_ms) do
       nil -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
-      note -> singing_cluster(frame.feedback, note, x, pill_y, lyric_y, max_w)
+      note -> singing_cluster(frame.feedback, note, frame.song.part, x, pill_y, lyric_y, max_w)
     end
   end
 
-  defp singing_cluster(feedback, note, x, pill_y, lyric_y, max_w) do
+  defp singing_cluster(feedback, note, part, x, pill_y, lyric_y, max_w) do
     {label, icon, color} = note_status(feedback)
     size = fit_size(display_lyric(note.lyric), Style.type(:active_lyric), max_w)
 
     [
       status_pill(x, pill_y, label, icon, color),
-      role_tag(x + pill_width(label) + 8, pill_y + 4, note.role),
+      role_tag(x + pill_width(label) + 8, pill_y + 4, note.role, part),
       text(x, lyric_y, display_lyric(note.lyric),
         color: Style.text_primary(),
         size: size,
@@ -963,7 +963,12 @@ defmodule ChoirCoach.PracticeView do
   defp breathe_cluster(frame, x, pill_y, lyric_y, max_w) do
     pill = [
       status_pill(x, pill_y, "Breathe", :dashes, Style.neutral()),
-      role_tag(x + pill_width("Breathe") + 8, pill_y + 4, Roles.at(frame.song, frame.t_ms))
+      role_tag(
+        x + pill_width("Breathe") + 8,
+        pill_y + 4,
+        Roles.at(frame.song, frame.t_ms),
+        frame.song.part
+      )
     ]
 
     case Song.next_note(frame.song, frame.t_ms) do
@@ -1023,7 +1028,7 @@ defmodule ChoirCoach.PracticeView do
     List.flatten([
       status_pill(x, y, label, icon, color),
       status_note(prefix, note, lyric_x, y, tag_x - 8),
-      role_tag(tag_x, y + 4, role)
+      role_tag(tag_x, y + 4, role, frame.song.part)
     ])
   end
 
@@ -1036,13 +1041,14 @@ defmodule ChoirCoach.PracticeView do
   defp note_status(%Feedback{status: status, color_cents: c}),
     do: {status_label(status), status_icon(status), Style.cents_color(c)}
 
-  # Whether this phrase is the tune (sing with everyone) or the part's own
-  # line; nothing on the melody itself.
-  defp role_tag(_x, _y, nil), do: []
+  # Whether this phrase is the tune (sing with everyone, in the melody's
+  # colour) or the part's own line (in the part's colour); nothing on the
+  # melody itself.
+  defp role_tag(_x, _y, nil, _part), do: []
 
-  defp role_tag(x, y, role) do
+  defp role_tag(x, y, role, part) do
     label = role_label(role)
-    color = if role == :melody, do: Style.swatch(:melody), else: Style.swatch(:bass)
+    color = Style.swatch(if role == :melody, do: :melody, else: part)
     w = role_tag_width(role)
 
     [

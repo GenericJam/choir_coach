@@ -1,7 +1,7 @@
 defmodule ChoirCoach.Songs.GraceOfGod do
   @moduledoc """
-  "Grace of God with Us" (Brett Younker, Ben Fielding and Aodhan King, arr. Russell Mauldin), bass part
-  and melody, bars 1–75.
+  "Grace of God with Us" (Brett Younker, Ben Fielding and Aodhan King, arr. Russell Mauldin), bass,
+  melody, soprano, alto and tenor parts, bars 1–75.
 
   Transcribed from the Drive score, bar by bar, and checked note by note
   against the Bass rehearsal track with the pitch detector: every note it
@@ -21,12 +21,21 @@ defmodule ChoirCoach.Songs.GraceOfGod do
   have it. Checked against the Soprano rehearsal track and the demo with the
   detector; the notes no recording confirms were re-read at 300–400 dpi and
   match the score.
+
+  The soprano, alto and tenor are the upper and lower voices of the treble
+  staff and the upper voice of the bass staff (unison lines go to every part
+  that sings them; tacet bars are rests), transcribed bar by bar and checked
+  against their own rehearsal tracks with the detector. The flagged notes were
+  re-read at 400 dpi: three were misreads (alto bars 38–39, tenor bars 39–40)
+  and are fixed; the rest are the bass's low C, F, G and A bleeding into the
+  channel (folded up by the detector), scoops, or the late pickups and early
+  fermata, each noted on its bar.
   """
 
   alias ChoirCoach.Song
 
-  @doc "The parts, in the order the practice screen offers them."
-  def parts, do: [:bass, :melody]
+  @doc "The parts: the four voice parts, top down, then the melody."
+  def parts, do: [:soprano, :alto, :tenor, :bass, :melody]
 
   @doc """
   Each part's recordings: where bar 1 falls on each (ms), and which channel
@@ -70,6 +79,27 @@ defmodule ChoirCoach.Songs.GraceOfGod do
     }
   end
 
+  # Soprano, alto and tenor: the part's rehearsal track, and its piano
+  # rendering (`scripts/render_piano.exs`), on the bass track's timeline.
+  defp part_tracks(part) when part in [:soprano, :alto, :tenor] do
+    name = part |> Atom.to_string() |> String.capitalize()
+
+    %{
+      piano: %{
+        file: "grace_of_god/piano_#{part}.mp3",
+        bar1_ms: 375.0,
+        voice: :left,
+        label: "Piano"
+      },
+      rehearsal: %{
+        file: "grace_of_god/#{part}.mp3",
+        bar1_ms: 375.0,
+        voice: :left,
+        label: "#{name} rehearsal"
+      }
+    }
+  end
+
   # Every part shares the bar timeline (and so every track's offsets).
   defp timing do
     [
@@ -88,6 +118,15 @@ defmodule ChoirCoach.Songs.GraceOfGod do
 
   @spec melody() :: Song.t()
   def melody, do: Song.build(timing() ++ [part: :melody, clef: :treble, bars: melody_bars()])
+
+  @spec soprano() :: Song.t()
+  def soprano, do: Song.build(timing() ++ [part: :soprano, clef: :treble, bars: soprano_bars()])
+
+  @spec alto() :: Song.t()
+  def alto, do: Song.build(timing() ++ [part: :alto, clef: :treble, bars: alto_bars()])
+
+  @spec tenor() :: Song.t()
+  def tenor, do: Song.build(timing() ++ [part: :tenor, clef: :bass, bars: tenor_bars()])
 
   defp bass_bars do
     [
@@ -482,6 +521,517 @@ defmodule ChoirCoach.Songs.GraceOfGod do
       [rest: 1, n: {"E4", 1, "Ooo"}, n: {"E4", 2, "~Ooo"}],
       # 75  sop: (Ooo) fermata
       [n: {"E4", 4, "~Ooo"}]
+    ]
+  end
+
+  defp soprano_bars do
+    [
+      # 1  (piano intro)
+      [rest: 4],
+      # 2  (piano intro)
+      [rest: 4],
+      # 3  (intro / solo)
+      [rest: 4],
+      # 4  (intro / solo)
+      [rest: 4],
+      # 5  (intro / solo)
+      [rest: 4],
+      # 6  (intro / solo)
+      [rest: 4],
+      # 7  (intro / solo)
+      [rest: 4],
+      # 8  (intro / solo)
+      [rest: 4],
+      # 9  (intro / solo)
+      [rest: 4],
+      # 10  (intro / solo)
+      [rest: 4],
+      # 11  unison (women), as the melody
+      [n: {"G4", 2, "Glo-"}, n: {"F4", 1, "ry"}, n: {"E4", 1, "to"}],
+      # 12  unison (women), as the melody
+      [n: {"G4", 1, "God"}, rest: 1, n: {"E4", 1, "in"}, n: {"G4", 1, "the"}],
+      # 13  unison (women), as the melody
+      [n: {"A4", 2, "high-"}, n: {"G4", 2, "~high-"}],
+      # 14  unison (women), as the melody
+      [n: {"G4", 3, "est."}, rest: 1],
+      # 15  unison (women), as the melody
+      [n: {"G4", 2, "Je-"}, n: {"F4", 1, "sus,"}, n: {"E4", 1, "our"}],
+      # 16  unison (women), as the melody
+      [n: {"G4", 2, "Sav-"}, n: {"C4", 1, "ior,"}, rest: 0.5, n: {"C4", 0.5, "the"}],
+      # 17  unison (women), as the melody
+      [n: {"C4", 1, "grace"}, n: {"E4", 1, "of"}, n: {"D4", 1.5, "God"}, n: {"C4", 0.5, "with"}],
+      # 18  unison (women), as the melody
+      [n: {"C4", 4, "us."}],
+      # 19  unison (women), as the melody
+      [rest: 3.5, n: {"C4", 0.5, "The"}],
+      # 20  unison (women), as the melody
+      [n: {"C4", 1, "kings"}, n: {"B3", 1, "of"}, n: {"D4", 1, "earth"}, n: {"C4", 1, "rest"}],
+      # 21  unison (women), as the melody
+      [
+        n: {"C4", 1, "on"},
+        n: {"B3", 1, "Your"},
+        n: {"D4", 1, "shoul-"},
+        n: {"C4", 0.5, "ders;"},
+        rest: 0.25,
+        n: {"C4", 0.25, "You"}
+      ],
+      # 22  unison (women), as the melody
+      [n: {"D4", 1, "rule"}, n: {"E4", 1, "on"}, n: {"C4", 1, "Da-"}, n: {"B3", 1, "vid's"}],
+      # 23  (WOMEN) throne.
+      [n: {"A3", 2, "throne."}, rest: 2],
+      # 24  (MEN)
+      [rest: 4],
+      # 25  (MEN)
+      [rest: 4],
+      # 26  (CHOIR unison) Christ, our Lord of
+      [n: {"D4", 1, "Christ,"}, n: {"E4", 1, "our"}, n: {"C4", 1, "Lord"}, n: {"G4", 1, "of"}],
+      # 27  lords.
+      [n: {"G4", 3, "lords."}, rest: 1],
+      # 28  Glo-ry to  (G4 F4 E4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 2, "Glo-"}, n: {"F4", 1, "ry"}, n: {"E4", 1, "to"}],
+      # 29  God in the  (G4 E4 G4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 1, "God"}, rest: 1, n: {"E4", 1, "in"}, n: {"G4", 1, "the"}],
+      # 30  high-  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"A4", 2, "high-"}, n: {"G4", 2, "~high-"}],
+      # 31  est.
+      [n: {"G4", 3, "est."}, rest: 1],
+      # 32  Je-sus, our  (G4 F4 E4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 2, "Je-"}, n: {"F4", 1, "sus,"}, n: {"E4", 1, "our"}],
+      # 33  Sav-ior, the  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under
+      #   it; "the" B3 is a scoop
+      [n: {"G4", 2, "Sav-"}, n: {"C4", 1, "ior,"}, rest: 0.5, n: {"C4", 0.5, "the"}],
+      # 34  grace of God with
+      [n: {"C4", 1, "grace"}, n: {"E4", 1, "of"}, n: {"D4", 1.5, "God"}, n: {"C4", 0.5, "with"}],
+      # 35  us.
+      [n: {"C4", 3, "us."}, rest: 1],
+      # 36  Ah  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"G4", 4, "Ah"}],
+      # 37  (Ah)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"A4", 2, "~Ah"}, n: {"G4", 2, "~Ah"}],
+      # 38  (Ah)
+      [n: {"G4", 4, "~Ah"}],
+      # 39  Ooo  ok: track A#4 is A#2 bleed folded; E4 then F4 heard
+      [rest: 1, n: {"E4", 1, "Ooo"}, n: {"F4", 2, "~Ooo"}],
+      # 40  (Ooo)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"G4", 1, "~Ooo"}, n: {"B4", 1, "~Ooo"}, n: {"A4", 2, "~Ooo"}],
+      # 41  Ooo  ok: track C4 is bass C2 bleed; E4 then D4 heard
+      [rest: 1, n: {"E4", 1, "Ooo"}, n: {"D4", 2, "~Ooo"}],
+      # 42  (Ooo)  ok: track F4 is F2 bleed; C4 heard
+      [n: {"C4", 4, "~Ooo"}],
+      # 43  (piano / solo)
+      [rest: 4],
+      # 44  (piano / solo)
+      [rest: 4],
+      # 45  (piano / solo)
+      [rest: 4],
+      # 46  (piano / solo)
+      [rest: 4],
+      # 47  (piano / solo)
+      [rest: 4],
+      # 48  (piano / solo)
+      [rest: 4],
+      # 49  (piano / solo)
+      [rest: 4],
+      # 50  (piano / solo)
+      [rest: 4],
+      # 51  (solo) choir: Our  ok: "Our" flagged D4: pickup sung late into the D4 (drift)
+      [rest: 3.5, n: {"C4", 0.5, "Our"}],
+      # 52  King will come a-
+      [n: {"D4", 1, "King"}, n: {"E4", 1, "will"}, n: {"C4", 1, "come"}, n: {"G4", 1, "a-"}],
+      # 53  gain.
+      [n: {"G4", 3, "gain."}, rest: 1],
+      # 54  Glo-ry to  (G4 F4 E4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 2, "Glo-"}, n: {"F4", 1, "ry"}, n: {"E4", 1, "to"}],
+      # 55  God in the  (G4 E4 G4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 1, "God"}, rest: 1, n: {"E4", 1, "in"}, n: {"G4", 1, "the"}],
+      # 56  high-  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"A4", 2, "high-"}, n: {"G4", 2, "~high-"}],
+      # 57  est.  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"G4", 3, "est."}, rest: 1],
+      # 58  Je-sus, our  (G4 F4 E4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"G4", 2, "Je-"}, n: {"F4", 1, "sus,"}, n: {"E4", 1, "our"}],
+      # 59  Sav-ior.  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"G4", 2, "Sav-"}, n: {"C4", 2, "ior."}],
+      # 60  (solo)
+      [rest: 4],
+      # 61  Oh,  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"E4", 1, "Oh,"}, n: {"F4", 1, "~Oh,"}, n: {"G4", 1, "~Oh,"}, n: {"A4", 1, "~Oh,"}],
+      # 62  glo-ry to  (C5 A4 G4)
+      [n: {"C5", 2, "glo-"}, n: {"A4", 1, "ry"}, n: {"G4", 1, "to"}],
+      # 63  God in the  (C5 C5 B4)
+      [n: {"C5", 1, "God"}, rest: 1, n: {"C5", 1, "in"}, n: {"B4", 1, "the"}],
+      # 64  high-  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"A4", 2, "high-"}, n: {"G4", 2, "~high-"}],
+      # 65  est.
+      [n: {"G4", 3, "est."}, rest: 1],
+      # 66  Je-sus, our  (G4 F4 E4)
+      [n: {"G4", 2, "Je-"}, n: {"F4", 1, "sus,"}, n: {"E4", 1, "our"}],
+      # 67  Sav-ior,  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note heard under it
+      [n: {"G4", 2, "Sav-"}, n: {"C4", 2, "ior,"}],
+      # 68  (solo)
+      [rest: 4],
+      # 69  unison
+      [rest: 3.5, n: {"C4", 0.5, "the"}],
+      # 70  unison
+      [n: {"C4", 3, "grace"}, n: {"E4", 1, "of"}],
+      # 71  unison
+      [n: {"D4", 2, "God"}, rest: 1, n: {"C4", 1, "with"}],
+      # 72  unison
+      [n: {"C4", 4, "us."}],
+      # 73  unison
+      [n: {"C4", 4, "~us."}],
+      # 74  Ooo  ? upper voice E4 then D4 half
+      [rest: 1, n: {"E4", 1, "Ooo"}, n: {"D4", 2, "~Ooo"}],
+      # 75  (Ooo) fermata
+      [n: {"C4", 4, "~Ooo"}]
+    ]
+  end
+
+  defp alto_bars do
+    [
+      # 1  (piano intro)
+      [rest: 4],
+      # 2  (piano intro)
+      [rest: 4],
+      # 3  (intro / solo)
+      [rest: 4],
+      # 4  (intro / solo)
+      [rest: 4],
+      # 5  (intro / solo)
+      [rest: 4],
+      # 6  (intro / solo)
+      [rest: 4],
+      # 7  (intro / solo)
+      [rest: 4],
+      # 8  (intro / solo)
+      [rest: 4],
+      # 9  (intro / solo)
+      [rest: 4],
+      # 10  (intro / solo)
+      [rest: 4],
+      # 11  unison (women), as the melody
+      [n: {"G4", 2, "Glo-"}, n: {"F4", 1, "ry"}, n: {"E4", 1, "to"}],
+      # 12  unison (women), as the melody
+      [n: {"G4", 1, "God"}, rest: 1, n: {"E4", 1, "in"}, n: {"G4", 1, "the"}],
+      # 13  unison (women), as the melody
+      [n: {"A4", 2, "high-"}, n: {"G4", 2, "~high-"}],
+      # 14  unison (women), as the melody
+      [n: {"G4", 3, "est."}, rest: 1],
+      # 15  unison (women), as the melody
+      [n: {"G4", 2, "Je-"}, n: {"F4", 1, "sus,"}, n: {"E4", 1, "our"}],
+      # 16  unison (women), as the melody
+      [n: {"G4", 2, "Sav-"}, n: {"C4", 1, "ior,"}, rest: 0.5, n: {"C4", 0.5, "the"}],
+      # 17  unison (women), as the melody
+      [n: {"C4", 1, "grace"}, n: {"E4", 1, "of"}, n: {"D4", 1.5, "God"}, n: {"C4", 0.5, "with"}],
+      # 18  unison (women), as the melody
+      [n: {"C4", 4, "us."}],
+      # 19  unison (women), as the melody
+      [rest: 3.5, n: {"C4", 0.5, "The"}],
+      # 20  unison (women), as the melody
+      [n: {"C4", 1, "kings"}, n: {"B3", 1, "of"}, n: {"D4", 1, "earth"}, n: {"C4", 1, "rest"}],
+      # 21  unison (women), as the melody
+      [
+        n: {"C4", 1, "on"},
+        n: {"B3", 1, "Your"},
+        n: {"D4", 1, "shoul-"},
+        n: {"C4", 0.5, "ders;"},
+        rest: 0.25,
+        n: {"C4", 0.25, "You"}
+      ],
+      # 22  unison (women), as the melody
+      [n: {"D4", 1, "rule"}, n: {"E4", 1, "on"}, n: {"C4", 1, "Da-"}, n: {"B3", 1, "vid's"}],
+      # 23  (WOMEN) throne.
+      [n: {"A3", 2, "throne."}, rest: 2],
+      # 24  (MEN)
+      [rest: 4],
+      # 25  (MEN)
+      [rest: 4],
+      # 26  (CHOIR unison) Christ, our Lord of
+      [n: {"D4", 1, "Christ,"}, n: {"E4", 1, "our"}, n: {"C4", 1, "Lord"}, n: {"G4", 1, "of"}],
+      # 27  lords.
+      [n: {"G4", 3, "lords."}, rest: 1],
+      # 28  Glo-ry to  (E4 D4 C4)
+      [n: {"E4", 2, "Glo-"}, n: {"D4", 1, "ry"}, n: {"C4", 1, "to"}],
+      # 29  God in the  (E4 C4 E4)  ok: C#4 is 0.6 st sharp, a scoop
+      [n: {"E4", 1, "God"}, rest: 1, n: {"C4", 1, "in"}, n: {"E4", 1, "the"}],
+      # 30  high-  ok: track A4 is the bass A2 bleed; F4 then E4 heard
+      [n: {"F4", 2, "high-"}, n: {"E4", 2, "~high-"}],
+      # 31  est.  ok: no alto readings under the bass; D4 as bars 57/65
+      [n: {"D4", 3, "est."}, rest: 1],
+      # 32  Je-sus, our  (E4 D4 C4)
+      [n: {"E4", 2, "Je-"}, n: {"D4", 1, "sus,"}, n: {"C4", 1, "our"}],
+      # 33  Sav-ior, the  ok: flags are timing (C4 heard on the next beat) and an A3 scoop
+      [n: {"E4", 2, "Sav-"}, n: {"C4", 1, "ior,"}, rest: 0.5, n: {"C4", 0.5, "the"}],
+      # 34  grace of God with  (unison C4, then the lower notes)
+      [n: {"C4", 1, "grace"}, n: {"C4", 1, "of"}, n: {"B3", 1.5, "God"}, n: {"C4", 0.5, "with"}],
+      # 35  us.
+      [n: {"C4", 3, "us."}, rest: 1],
+      # 36  Ah
+      [n: {"E4", 4, "Ah"}],
+      # 37  (Ah)
+      [n: {"F4", 2, "~Ah"}, n: {"E4", 2, "~Ah"}],
+      # 38  (Ah)  ok: 400 dpi lower note sits below the staff (D4); track hears D4  ok: first half the G2 bleed, D4
+      #   heard from beat 3
+      [n: {"D4", 4, "~Ah"}],
+      # 39  Ooo  (C4 tied)  ok: 400 dpi the arc is a tie on C4 (the soprano slurs E4-F4); track holds C4
+      [rest: 1, n: {"C4", 1, "Ooo"}, n: {"C4", 2, "~Ooo"}],
+      # 40  (Ooo)
+      [n: {"E4", 1, "~Ooo"}, n: {"G4", 1, "~Ooo"}, n: {"F4", 2, "~Ooo"}],
+      # 41  Ooo
+      [rest: 1, n: {"C4", 1, "Ooo"}, n: {"B3", 2, "~Ooo"}],
+      # 42  (Ooo)
+      [n: {"G3", 4, "~Ooo"}],
+      # 43  (piano / solo)
+      [rest: 4],
+      # 44  (piano / solo)
+      [rest: 4],
+      # 45  (piano / solo)
+      [rest: 4],
+      # 46  (piano / solo)
+      [rest: 4],
+      # 47  (piano / solo)
+      [rest: 4],
+      # 48  (piano / solo)
+      [rest: 4],
+      # 49  (piano / solo)
+      [rest: 4],
+      # 50  (piano / solo)
+      [rest: 4],
+      # 51  (solo) choir: Our  ok: "Our" sung late into D4 (drift)
+      [rest: 3.5, n: {"C4", 0.5, "Our"}],
+      # 52  King will come a-  ok: "a-" D4 under G2 bleed, D4 heard
+      [n: {"D4", 1, "King"}, n: {"E4", 1, "will"}, n: {"C4", 1, "come"}, n: {"D4", 1, "a-"}],
+      # 53  gain.
+      [n: {"C4", 3, "gain."}, rest: 1],
+      # 54  Glo-ry to  (E4 D4 C4)
+      [n: {"E4", 2, "Glo-"}, n: {"D4", 1, "ry"}, n: {"C4", 1, "to"}],
+      # 55  God in the  (E4 C4 E4)
+      [n: {"E4", 1, "God"}, rest: 1, n: {"C4", 1, "in"}, n: {"E4", 1, "the"}],
+      # 56  high-
+      [n: {"F4", 2, "high-"}, n: {"E4", 2, "~high-"}],
+      # 57  est.
+      [n: {"D4", 3, "est."}, rest: 1],
+      # 58  Je-sus, our  (E4 D4 C4)
+      [n: {"E4", 2, "Je-"}, n: {"D4", 1, "sus,"}, n: {"C4", 1, "our"}],
+      # 59  Sav-ior.
+      [n: {"E4", 2, "Sav-"}, n: {"C4", 2, "ior."}],
+      # 60  (solo)
+      [rest: 4],
+      # 61  Oh,
+      [n: {"C4", 1, "Oh,"}, n: {"D4", 1, "~Oh,"}, n: {"E4", 1, "~Oh,"}, n: {"F4", 1, "~Oh,"}],
+      # 62  glo-ry to  (G4 F4 E4)
+      [n: {"G4", 2, "glo-"}, n: {"F4", 1, "ry"}, n: {"E4", 1, "to"}],
+      # 63  God in the  (G4 G4 G4)  ok: track C5 is the bass C bleed
+      [n: {"G4", 1, "God"}, rest: 1, n: {"G4", 1, "in"}, n: {"G4", 1, "the"}],
+      # 64  high-  ok: track A4 is the bass A2 bleed
+      [n: {"F4", 2, "high-"}, n: {"E4", 2, "~high-"}],
+      # 65  est.
+      [n: {"D4", 3, "est."}, rest: 1],
+      # 66  Je-sus, our  (E4 D4 C4)
+      [n: {"E4", 2, "Je-"}, n: {"D4", 1, "sus,"}, n: {"C4", 1, "our"}],
+      # 67  Sav-ior,  ok: track C4 is C2 bleed; E4 heard (folded E3)
+      [n: {"E4", 2, "Sav-"}, n: {"C4", 2, "ior,"}],
+      # 68  (solo)
+      [rest: 4],
+      # 69  unison
+      [rest: 3.5, n: {"C4", 0.5, "the"}],
+      # 70  unison
+      [n: {"C4", 3, "grace"}, n: {"E4", 1, "of"}],
+      # 71  unison
+      [n: {"D4", 2, "God"}, rest: 1, n: {"C4", 1, "with"}],
+      # 72  unison
+      [n: {"C4", 4, "us."}],
+      # 73  unison
+      [n: {"C4", 4, "~us."}],
+      # 74  Ooo  ? lower voice C4~C4, B3  ok: track runs ~0.5 s early here (rit.); B3 lands as C4 holds
+      [rest: 1, n: {"C4", 1, "Ooo"}, n: {"C4", 1, "~Ooo"}, n: {"B3", 1, "~Ooo"}],
+      # 75  (Ooo) fermata
+      [n: {"G3", 4, "~Ooo"}]
+    ]
+  end
+
+  defp tenor_bars do
+    [
+      # 1  (piano intro)
+      [rest: 4],
+      # 2  (piano intro)
+      [rest: 4],
+      # 3  (intro / solo)
+      [rest: 4],
+      # 4  (intro / solo)
+      [rest: 4],
+      # 5  (intro / solo)
+      [rest: 4],
+      # 6  (intro / solo)
+      [rest: 4],
+      # 7  (intro / solo)
+      [rest: 4],
+      # 8  (intro / solo)
+      [rest: 4],
+      # 9  (intro / solo)
+      [rest: 4],
+      # 10  (intro / solo)
+      [rest: 4],
+      # 11  unison (men), as the bass
+      [n: {"G3", 2, "Glo-"}, n: {"F3", 1, "ry"}, n: {"E3", 1, "to"}],
+      # 12  unison (men), as the bass
+      [n: {"G3", 1, "God"}, rest: 1, n: {"E3", 1, "in"}, n: {"G3", 1, "the"}],
+      # 13  unison (men), as the bass
+      [n: {"A3", 2, "high-"}, n: {"G3", 2, "~high-"}],
+      # 14  unison (men), as the bass
+      [n: {"G3", 3, "est."}, rest: 1],
+      # 15  unison (men), as the bass
+      [n: {"G3", 2, "Je-"}, n: {"F3", 1, "sus,"}, n: {"E3", 1, "our"}],
+      # 16  unison (men), as the bass
+      [n: {"G3", 2, "Sav-"}, n: {"C3", 1, "ior,"}, rest: 0.5, n: {"C3", 0.5, "the"}],
+      # 17  unison (men), as the bass
+      [
+        n: {"C3", 1, "grace"},
+        n: {"E3", 1, "of"},
+        n: {"D3", 1.5, "God"},
+        n: {"C3", 0.5, "with"}
+      ],
+      # 18  unison (men), as the bass
+      [n: {"C3", 4, "us."}],
+      # 19  (WOMEN)
+      [rest: 4],
+      # 20  (WOMEN)
+      [rest: 4],
+      # 21  (WOMEN)
+      [rest: 4],
+      # 22  (WOMEN)
+      [rest: 4],
+      # 23  unison with the bass
+      [rest: 3.5, n: {"C3", 0.5, "Your"}],
+      # 24  unison with the bass
+      [n: {"C3", 1, "king-"}, n: {"B2", 1, "dom"}, n: {"D3", 1, "here"}, n: {"C3", 1, "is"}],
+      # 25  unison with the bass
+      [
+        n: {"C3", 1, "now"},
+        n: {"B2", 1, "es-"},
+        n: {"D3", 1, "tab-"},
+        n: {"C3", 0.5, "lished,"},
+        rest: 0.5
+      ],
+      # 26  unison with the bass
+      [n: {"D3", 1, "Christ,"}, n: {"E3", 1, "our"}, n: {"C3", 1, "Lord"}, n: {"G3", 1, "of"}],
+      # 27  unison with the bass
+      [n: {"G3", 3, "lords."}, rest: 1],
+      # 28  Glo-ry to  (C4 A3 G3)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it; A#3 a sharp A3
+      [n: {"C4", 2, "Glo-"}, n: {"A3", 1, "ry"}, n: {"G3", 1, "to"}],
+      # 29  God in the  (C4 G3 C4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"C4", 1, "God"}, rest: 1, n: {"G3", 1, "in"}, n: {"C4", 1, "the"}],
+      # 30  high-
+      [n: {"C4", 4, "high-"}],
+      # 31  est.
+      [n: {"C4", 2, "est."}, n: {"B3", 1, "~est."}, rest: 1],
+      # 32  Je-sus, our  (C4 A3 G3)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"C4", 2, "Je-"}, n: {"A3", 1, "sus,"}, n: {"G3", 1, "our"}],
+      # 33  Sav-ior, the
+      [n: {"C4", 2, "Sav-"}, n: {"A3", 1, "ior,"}, rest: 0.5, n: {"A3", 0.5, "the"}],
+      # 34  grace of God with  (unison with the bass)  ok: track flags are the men's C (C2/C3) bleeding in, folded
+      #   up; written note heard under it
+      [
+        n: {"G3", 1, "grace"},
+        n: {"G3", 1, "of"},
+        n: {"G3", 1.5, "God"},
+        n: {"C4", 0.5, "with"}
+      ],
+      # 35  us.
+      [n: {"C4", 3, "us."}, rest: 1],
+      # 36  Ah
+      [n: {"C4", 2, "Ah"}, n: {"D4", 1, "~Ah"}, n: {"C4", 1, "~Ah"}],
+      # 37  (Ah)
+      [n: {"C4", 4, "~Ah"}],
+      # 38  (Ah)
+      [n: {"C4", 2, "~Ah"}, n: {"B3", 2, "~Ah"}],
+      # 39  Ooo  (G3 A3)  ok: re-read at 400 dpi, upper notes of the chords over the bass's C3 D3; track agrees  ok:
+      #   G3 under the bass C2 bleed
+      [rest: 1, n: {"G3", 1, "Ooo"}, n: {"A3", 2, "~Ooo"}],
+      # 40  (Ooo)  (C4 tied)  ok: re-read at 400 dpi (ledger C4 over the bass's E3 F3); track hears C4  ok: track F4
+      #   is the bass F2 bleed; C4 heard
+      [n: {"C4", 4, "~Ooo"}],
+      # 41  Ooo
+      [rest: 1, n: {"G3", 3, "Ooo"}],
+      # 42  (Ooo)
+      [n: {"E3", 4, "~Ooo"}],
+      # 43  (piano / solo)
+      [rest: 4],
+      # 44  (piano / solo)
+      [rest: 4],
+      # 45  (piano / solo)
+      [rest: 4],
+      # 46  (piano / solo)
+      [rest: 4],
+      # 47  (piano / solo)
+      [rest: 4],
+      # 48  (piano / solo)
+      [rest: 4],
+      # 49  (piano / solo)
+      [rest: 4],
+      # 50  (piano / solo)
+      [rest: 4],
+      # 51  (solo) choir: Our  ok: "Our" sung late into D3 (drift)
+      [rest: 3.5, n: {"C3", 0.5, "Our"}],
+      # 52  King will come a-
+      [n: {"D3", 1, "King"}, n: {"E3", 1, "will"}, n: {"G3", 1, "come"}, n: {"B3", 1, "a-"}],
+      # 53  gain.
+      [n: {"A3", 3, "gain."}, rest: 1],
+      # 54  Glo-ry to  (C4 A3 G3)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it; A#3 a sharp A3
+      [n: {"C4", 2, "Glo-"}, n: {"A3", 1, "ry"}, n: {"G3", 1, "to"}],
+      # 55  God in the  (C4 G3 C4)  ok: track flags are the men's C (C2/C3) bleeding in, folded up; written note
+      #   heard under it
+      [n: {"C4", 1, "God"}, rest: 1, n: {"G3", 1, "in"}, n: {"C4", 1, "the"}],
+      # 56  high-
+      [n: {"C4", 4, "high-"}],
+      # 57  est.
+      [n: {"C4", 2, "est."}, n: {"B3", 1, "~est."}, rest: 1],
+      # 58  Je-sus, our  (C4 A3 G3)
+      [n: {"C4", 2, "Je-"}, n: {"A3", 1, "sus,"}, n: {"G3", 1, "our"}],
+      # 59  Sav-ior.
+      [n: {"C4", 2, "Sav-"}, n: {"A3", 2, "ior."}],
+      # 60  (solo)
+      [rest: 4],
+      # 61  Oh,
+      [n: {"G3", 1, "Oh,"}, n: {"A3", 1, "~Oh,"}, n: {"C4", 1, "~Oh,"}, n: {"D4", 1, "~Oh,"}],
+      # 62  glo-ry to  (E4 D4 C4)
+      [n: {"E4", 2, "glo-"}, n: {"D4", 1, "ry"}, n: {"C4", 1, "to"}],
+      # 63  God in the  (E4 E4 D4)  ok: E4 heard; beats 3-4 weak (G2 bleed), D4 present
+      [n: {"E4", 1, "God"}, rest: 1, n: {"E4", 1, "in"}, n: {"D4", 1, "the"}],
+      # 64  high-
+      [n: {"C4", 4, "high-"}],
+      # 65  est.  ok: B3 0.8 st sharp, late
+      [n: {"C4", 2, "est."}, n: {"B3", 1, "~est."}, rest: 1],
+      # 66  Je-sus, our  (C4 A3 G3)  ok: few readings; "our" G3 weak under the bass
+      [n: {"C4", 2, "Je-"}, n: {"A3", 1, "sus,"}, n: {"G3", 1, "our"}],
+      # 67  Sav-ior,
+      [n: {"C4", 2, "Sav-"}, n: {"A3", 2, "ior,"}],
+      # 68  (solo)
+      [rest: 4],
+      # 69  unison with the bass
+      [rest: 3.5, n: {"C3", 0.5, "the"}],
+      # 70  unison with the bass
+      [n: {"C3", 3, "grace"}, n: {"E3", 1, "of"}],
+      # 71  unison with the bass
+      [n: {"G3", 2, "God"}, rest: 1, n: {"C4", 1, "with"}],
+      # 72  unison with the bass
+      [n: {"C4", 4, "us."}],
+      # 73  unison with the bass
+      [n: {"C4", 4, "~us."}],
+      # 74  Ooo  (bass staff upper voice: G3~G3 dotted, F3 eighth)  ok: track runs ~0.5 s early; G3 then F3 to E3 heard
+      [rest: 1, n: {"G3", 1, "Ooo"}, n: {"G3", 1.5, "~Ooo"}, n: {"F3", 0.5, "~Ooo"}],
+      # 75  (Ooo) fermata
+      [n: {"E3", 4, "~Ooo"}]
     ]
   end
 end

@@ -42,10 +42,11 @@ picks up `deps/mob/usage-rules.md`.
 
 A choir practice coach: it plays a rehearsal track and shows, on a scrolling
 note timeline, whether the singer is above or below the written note. Each
-song has two parts to switch between: the bass, and the melody (the tune,
-whoever sings it). The visual design is the Claude Design handoff "Choir
-Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
-`ChoirCoach.Style`.
+song has the four voice parts (soprano, alto, tenor, bass) and the melody
+(the tune, whoever sings it); a singer picks their part once on the song
+list and switches between it and the melody. The visual design is the
+Claude Design handoff "Choir Pitch Coach" (reference artboard 390 × 844 pt);
+its tokens live in `ChoirCoach.Style`.
 
 - `ChoirCoach.Song` — a voice part as timed notes on the rehearsal track's
   timeline, built bar by bar from the score (`Song.build/1` rejects a bar
@@ -53,15 +54,21 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
   rit. or fermata; `key`, `key_changes`, `meter`, `tempo` change from a bar
   on). Notes keep their written spelling (`"Bb2"` sits on the B line) and
   carry the accidental the staff prints. `ChoirCoach.Songs` lists the songs
-  and builds each one's parts (`Songs.parts/1`); each `ChoirCoach.Songs.*`
-  module has `parts/0`, one function per part (`bass/0`, `melody/0`) built
-  from its bars plus the shared `timing/0` (both parts are on one bar
-  timeline, so one set of track offsets serves both), and `tracks/1`.
-- `ChoirCoach.SongsScreen` — the root: the song list. Tapping a song pushes
-  the practice screen with `%{parts: Songs.parts(module)}`.
+  and builds the two a singer practises (`Songs.parts(module, my_part)`:
+  their part, marked by `ChoirCoach.Roles`, and the melody); each
+  `ChoirCoach.Songs.*` module has `parts/0`, one function per part
+  (`soprano/0`, `alto/0`, `tenor/0`, `bass/0`, `melody/0`) built from its
+  bars plus the shared `timing/0` (all parts are on one bar timeline, so
+  one set of track offsets serves them all), and `tracks/1`. Soprano and
+  alto use the treble clef, tenor and bass the bass clef, all at sounding
+  pitch.
+- `ChoirCoach.SongsScreen` — the root: "Your part" (Soprano · Alto · Tenor
+  · Bass, saved as `Settings.my_part/0`, bass until picked) and the song
+  list. Tapping a song pushes the practice screen with
+  `%{parts: Songs.parts(module, my_part)}`.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. The staff follows the song's
-  clef: bass for the bass, treble for the melody. `compact_ops/1` is the
+  clef: bass for tenor and bass, treble for soprano, alto and the melody. `compact_ops/1` is the
   staff plus one status line, shown while the mix sheet covers the roll.
   `ChoirCoach.ControlsView` draws the transport icons, progress track and the
   headphones icon; `ChoirCoach.MixView` the mix sheet's swatches and ear map.
@@ -70,12 +77,12 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
 - `ChoirCoach.Roles` — marks each phrase of a non-melody part (a run of
   notes without a rest of a beat or more) as `:melody` when at least 75% of
   its sounding time matches the melody's pitch class (an octave down
-  counts), else `:part`. `Songs.parts/1` applies it; the practice screen
+  counts), else `:part`. `Songs.parts/2` applies it; the practice screen
   tags the phrase being sung, or the next one, "Melody" (sing with
   everyone) or "Part" (your own line). It depends on the melody
   transcription, so fix a wrong tag there, not here.
 - `ChoirCoach.Mix` — pure: what the singer hears. A part's sources are rows
-  (`:part_piano` (bass only), `:voices` (the part's rehearsal track, left),
+  (`:part_piano` (voice parts, not the melody), `:voices` (the part's rehearsal track, left),
   `:band` (its right)), each with on, level 0–100 and balance −100…100;
   presets Rehearsal, Me in right ear, Full choir / Demo (whole recordings,
   a single file), My mix. `load_spec/2` gives the engine's sources and
@@ -120,7 +127,7 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
 - `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
   readings are octave-folded and gated to the written notes before they feed
   the trace and feedback. Header: title and headphones icon (→ Audio), then
-  the facts with the current bar and the Bass | Melody switch (same song
+  the facts with the current bar and the <your part> | Melody switch (same song
   time, that part's mix and engine state). Transport: restart, −1 bar,
   play, +1 bar, loop, Mix (opens "What you hear"; its caption is the
   preset); the controls narrow to fit (`ControlsView.control_width/2`).
@@ -154,32 +161,33 @@ Pitch Coach" (reference artboard 390 × 844 pt); its tokens live in
 
 The rehearsal tracks are licensed recordings: they live in
 `priv/audio/<song>/` (gitignored) and reach the phone with the BEAMs on
-deploy. Each song has `bass.mp3` and `soprano.mp3` (all voices left with
-that part loudest, the others about 12 dB down; accompaniment right; the
-part tracks share one timeline exactly), `split.mp3` (accompaniment left,
-full choir right) and `demo.mp3` (finished mix). No file has a part alone,
-and the part tracks can't be unmixed (each is its own vocal mix). Offsets
-live in each song's `tracks/1`. The melody's rehearsal track is the
-soprano's, since the tune is mostly theirs.
+deploy. Each song has `soprano.mp3`, `alto.mp3`, `tenor.mp3` and `bass.mp3`
+(all voices left with that part loudest, the others about 12 dB down;
+accompaniment right; the part tracks share one timeline exactly),
+`split.mp3` (accompaniment left, full choir right) and `demo.mp3` (finished
+mix). No file has a part alone, and the part tracks can't be unmixed (each
+is its own vocal mix). Offsets live in each song's `tracks/1`. The melody's
+rehearsal track is the soprano's, since the tune is mostly theirs.
 
-`piano_bass.mp3` is generated, not downloaded: the bass as piano notes (as
-at in-person rehearsal), left, over the rehearsal track's accompaniment,
-right, on the rehearsal track's timeline: the mixer's "Bass on piano" row.
-The melody has no piano: its notes are canonical (transcribed, checked
-against the recordings) for the pitch checking, and the closest recordings
-are the Soprano rehearsal track and the demo. Regenerate the piano after any
-change to the bass's notes or timing: `brew install fluid-synth`, get a
-General MIDI SoundFont (GeneralUser GS lives in
-`~/.local/share/soundfonts/` here), then
-`SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> bass`.
-`ALIGN_FIT=0 scripts/align_track.exs <Module> piano` checks it: every note
-on pitch.
+`piano_<part>.mp3` (soprano, alto, tenor, bass) is generated, not
+downloaded: the part as piano notes (as at in-person rehearsal), left, over
+the rehearsal track's accompaniment, right, on the rehearsal track's
+timeline: the mixer's "<Part> on piano" row. The melody has no piano: its
+notes are canonical (transcribed, checked against the recordings) for the
+pitch checking, and the closest recordings are the Soprano rehearsal track
+and the demo. Regenerate a part's piano after any change to its notes or
+timing: `brew install fluid-synth`, get a General MIDI SoundFont
+(GeneralUser GS lives in `~/.local/share/soundfonts/` here), then
+`SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> <part>`.
+`PART=<part> ALIGN_FIT=0 scripts/align_track.exs <Module> piano` checks it:
+every note on pitch.
 
 ## Adding a song
 
-1. Download from its Drive folder (score PDF, Bass rehearsal, Split, Demo)
-   into `priv/audio/<slug>/` as `bass.mp3`, `split.mp3`, `demo.mp3`; the
-   Soprano rehearsal track as `soprano.mp3`.
+1. Download from its Drive folder (score PDF, the four part rehearsal
+   tracks, Split, Demo) into `priv/audio/<slug>/` as `soprano.mp3`,
+   `alto.mp3`, `tenor.mp3`, `bass.mp3`, `split.mp3`, `demo.mp3`. The song
+   folders are public: `https://drive.usercontent.google.com/download?id=<file id>&export=download&confirm=t`.
 2. Transcribe the bass (the lower voice of the bass-clef staff; tenor is the
    upper) bar by bar, sounding pitches with the key signature applied.
    `scripts/validate_transcription.exs` checks a chunk's beats and names.
@@ -196,11 +204,18 @@ on pitch.
    where the tune is the alto's, the men's or the solo's, check flagged
    notes against the Alto/Tenor rehearsal tracks and the demo before
    re-reading the score.
+4b. Transcribe soprano, alto (upper/lower treble voices) and tenor (upper
+   bass-staff voice) the same way, each checked with `PART=<part>
+   ALIGN_FIT=0 scripts/align_track.exs <Module>` against its own track.
+   Most flags there are a neighbouring voice picked up (often about 5
+   semitones off) or a scoop; re-read the rest at 400 dpi. Each part
+   should match its own track better than any other part's track.
 5. Split and Demo offsets: cross-correlate onset envelopes against the
    rehearsal track (they share the accompaniment); check the lag holds in
    every 30 s window.
-6. `scripts/render_piano.exs <Module> bass` renders `piano_bass.mp3`;
-   `tracks(:bass)` points at it with the rehearsal track's `bar1_ms`.
+6. `scripts/render_piano.exs <Module> <part>` renders `piano_<part>.mp3`
+   for each voice part; `tracks/1` points at it with the rehearsal track's
+   `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
 
 ## Working on it
@@ -231,7 +246,7 @@ on pitch.
 - `SERIAL=<serial> mix run --no-start scripts/controls_check.exs` drives
   every practice-screen control on a connected Android phone with **real**
   touches (`adb shell input`), for each song: play, ±1 bar while playing,
-  scrubbing, loop, the Mix sheet (preset, Done, toggle), Bass ⇄ Melody,
+  scrubbing, loop, the Mix sheet (preset, Done, toggle), part ⇄ Melody (`PART=` picks the part),
   restart, pause, the Audio screen round trip, system back. It finds the
   controls by their `id` (`Mob.Test.element_frames/1`), so any screen size
   works. Run it after any change to the practice screen or the engine;

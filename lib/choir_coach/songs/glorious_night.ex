@@ -1,7 +1,7 @@
 defmodule ChoirCoach.Songs.GloriousNight do
   @moduledoc """
   "What a Glorious Night" (with "Angels We Have Heard on High"), arr. Russell
-  Mauldin, bass part and melody, bars 1–113.
+  Mauldin, all four voice parts and the melody, bars 1–113.
 
   Transcribed from the Drive score, bar by bar, and checked against the Bass
   rehearsal track with the pitch detector: in unison passages the detector
@@ -18,12 +18,19 @@ defmodule ChoirCoach.Songs.GloriousNight do
   soprano elsewhere, the men's line an octave up where they sing it alone.
   Checked against the Soprano and Alto rehearsal tracks with the detector;
   the notes no recording confirms were re-read at 400 dpi and match the score.
+
+  The soprano, alto and tenor parts are transcribed too: soprano and alto
+  the upper and lower voices of the treble staff (the alto is the "mel."
+  line where marked), tenor the upper voice of the bass staff, unisons and
+  the women-only / men-only bars (70–75) as printed. Each was checked
+  against its own rehearsal track with the detector; the notes heard off
+  the written pitch were re-read at 400 dpi (see the bar comments).
   """
 
   alias ChoirCoach.Song
 
-  @doc "The parts, in the order the practice screen offers them."
-  def parts, do: [:bass, :melody]
+  @doc "The parts: the four voice parts, top down, then the melody."
+  def parts, do: [:soprano, :alto, :tenor, :bass, :melody]
 
   @doc """
   Each part's recordings: where bar 1 falls on each (ms), and which channel
@@ -72,6 +79,27 @@ defmodule ChoirCoach.Songs.GloriousNight do
     }
   end
 
+  # Soprano, alto and tenor: the part's rehearsal track, and its piano
+  # rendering (`scripts/render_piano.exs`), on the bass track's timeline.
+  defp part_tracks(part) when part in [:soprano, :alto, :tenor] do
+    name = part |> Atom.to_string() |> String.capitalize()
+
+    %{
+      piano: %{
+        file: "glorious_night/piano_#{part}.mp3",
+        bar1_ms: 358.0,
+        voice: :left,
+        label: "Piano"
+      },
+      rehearsal: %{
+        file: "glorious_night/#{part}.mp3",
+        bar1_ms: 358.0,
+        voice: :left,
+        label: "#{name} rehearsal"
+      }
+    }
+  end
+
   # Every part shares the bar timeline (and so every track's offsets).
   defp timing do
     [
@@ -90,6 +118,15 @@ defmodule ChoirCoach.Songs.GloriousNight do
 
   @spec melody() :: Song.t()
   def melody, do: Song.build(timing() ++ [part: :melody, clef: :treble, bars: melody_bars()])
+
+  @spec soprano() :: Song.t()
+  def soprano, do: Song.build(timing() ++ [part: :soprano, clef: :treble, bars: soprano_bars()])
+
+  @spec alto() :: Song.t()
+  def alto, do: Song.build(timing() ++ [part: :alto, clef: :treble, bars: alto_bars()])
+
+  @spec tenor() :: Song.t()
+  def tenor, do: Song.build(timing() ++ [part: :tenor, clef: :bass, bars: tenor_bars()])
 
   defp bass_bars do
     [
@@ -1382,6 +1419,1963 @@ defmodule ChoirCoach.Songs.GloriousNight do
       ],
       # 113  unison (women): night.   (fermata, final bar)
       [n: {"C4", 4, "night."}]
+    ]
+  end
+
+  defp soprano_bars do
+    [
+      # 1  (instrumental intro)
+      [rest: 4],
+      # 2  (instrumental intro)
+      [rest: 4],
+      # 3  (instrumental intro)
+      [rest: 4],
+      # 4  (instrumental intro)
+      [rest: 4],
+      # 5  (instrumental intro)
+      [rest: 4],
+      # 6  (instrumental intro)
+      [rest: 4],
+      # 7  (instrumental intro)
+      [rest: 4],
+      # 8  (instrumental intro)
+      [rest: 4],
+      # 9  (instrumental intro)
+      [rest: 4],
+      # 10  (instrumental intro)
+      [rest: 4],
+      # 11  (instrumental intro)
+      [rest: 4],
+      # 12  (instrumental intro)
+      [rest: 4],
+      # 13  Glo-
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"C5", 2, "Glo-"},
+        n: {"D5", 0.5, "~Glo-"},
+        n: {"C5", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"}
+      ],
+      # 14  (Glo-)
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2, "~Glo-"},
+        n: {"B4", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 1, "~Glo-"}
+      ],
+      # 15  (Glo-)  ok: half tied to the beat-3 A4
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 16  (Glo-) ri-a
+      [n: {"G4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 17  in ex-cel-sis
+      [n: {"E4", 1, "in"}, n: {"F4", 1, "ex-"}, n: {"G4", 1, "cel-"}, n: {"A4", 1, "sis"}],
+      # 18  De-  ok: half tied to the dotted quarter
+      [n: {"G4", 3.5, "De-"}, n: {"F4", 0.5, "~De-"}],
+      # 19  o!
+      [n: {"E4", 4, "o!"}],
+      # 20  unison: The shep-herds came to
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "The"},
+        n: {"A4", 0.5, "shep-"},
+        n: {"G4", 0.5, "herds"},
+        n: {"G4", 1, "came"},
+        n: {"C5", 1, "to"}
+      ],
+      # 21  unison: see the Ba-by,
+      [
+        rest: 1,
+        n: {"D4", 0.5, "see"},
+        n: {"E4", 0.5, "the"},
+        n: {"D4", 0.5, "Ba-"},
+        n: {"C4", 0.5, "~Ba-"},
+        n: {"C4", 1, "by,"}
+      ],
+      # 22  unison: stood by His moth-er's side
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "stood"},
+        n: {"A4", 0.5, "by"},
+        n: {"G4", 0.5, "His"},
+        n: {"G4", 0.75, "moth-"},
+        n: {"E4", 0.75, "er's"},
+        n: {"E4", 0.5, "side"}
+      ],
+      # 23  unison: (side)
+      [n: {"E4", 2, "~side"}, rest: 2],
+      # 24  unison: Here laid the Sav-ior
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "Here"},
+        n: {"A4", 0.5, "laid"},
+        n: {"G4", 0.5, "the"},
+        n: {"G4", 1, "Sav-"},
+        n: {"C5", 1, "ior"}
+      ],
+      # 25  unison: in-side a man-ger.
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "in-"},
+        n: {"D4", 0.5, "side"},
+        n: {"E4", 0.5, "a"},
+        n: {"D4", 0.5, "man-"},
+        n: {"C4", 0.5, "~man-"},
+        n: {"C4", 0.5, "ger."},
+        rest: 0.5
+      ],
+      # 26  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 27  unison: night.
+      [n: {"C4", 2, "night."}, rest: 2],
+      # 28  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 29  unison: night.
+      [n: {"C4", 4, "night."}],
+      # 30  I hear the
+      #   ? "I" scooped
+      [rest: 2.5, n: {"G4", 0.5, "I"}, n: {"F4", 0.5, "hear"}, n: {"E4", 0.5, "the"}],
+      # 31  an-gels sing-ing,
+      [n: {"F4", 1, "an-"}, n: {"F4", 1, "gels"}, n: {"E4", 1, "sing-"}, n: {"E4", 1, "ing,"}],
+      # 32  Hal-le-lu-jah! Let the
+      [
+        rest: 1,
+        n: {"G4", 0.5, "Hal-"},
+        n: {"G4", 0.5, "le-"},
+        n: {"G4", 0.5, "lu-"},
+        n: {"A4", 0.5, "jah!"},
+        n: {"F4", 0.5, "Let"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 33  earth re-ceive her
+      [
+        n: {"A4", 1, "earth"},
+        n: {"A4", 1, "re-"},
+        n: {"G4", 1, "ceive"},
+        n: {"A4", 0.5, "her"},
+        n: {"G4", 0.5, "~her"}
+      ],
+      # 34  King!" I know that
+      [
+        n: {"G4", 2, "King!\""},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "know"},
+        n: {"E4", 0.5, "that"}
+      ],
+      # 35  Love has come,
+      [n: {"F4", 1, "Love"}, n: {"F4", 1, "has"}, n: {"E4", 2, "come,"}],
+      # 36  sing it out,
+      #   ? "sing" reads C5 (also on bar 32's same chord); score G4, D4+G4 chord
+      [
+        rest: 1,
+        n: {"G4", 0.5, "sing"},
+        n: {"G4", 0.5, "it"},
+        n: {"G4", 0.5, "out,"},
+        n: {"A4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 37  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 38  born!
+      [n: {"G4", 3, "born!"}, rest: 1],
+      # 39  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"C5", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 40  born!
+      [n: {"G4", 3, "born!"}, rest: 1],
+      # 41  Glo-
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"C5", 2, "Glo-"},
+        n: {"D5", 0.5, "~Glo-"},
+        n: {"C5", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"}
+      ],
+      # 42  (Glo-)
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2, "~Glo-"},
+        n: {"B4", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 1, "~Glo-"}
+      ],
+      # 43  (Glo-)  ok: half tied to the beat-3 A4
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 44  (Glo-) ri-a
+      [n: {"G4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 45  in ex-cel-sis
+      [n: {"E4", 1, "in"}, n: {"F4", 1, "ex-"}, n: {"G4", 1, "cel-"}, n: {"A4", 1, "sis"}],
+      # 46  De-  ok: half tied to the dotted quarter
+      [n: {"G4", 3.5, "De-"}, n: {"F4", 0.5, "~De-"}],
+      # 47  o!
+      [n: {"E4", 4, "o!"}],
+      # 48  unison: The shep-herds won-dered,
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "The"},
+        n: {"A4", 0.5, "shep-"},
+        n: {"G4", 0.5, "herds"},
+        n: {"G4", 1, "won-"},
+        n: {"C5", 1, "dered,"}
+      ],
+      # 49  unison: they could-n't hide it,
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "they"},
+        n: {"D4", 0.5, "could-"},
+        n: {"E4", 0.5, "n't"},
+        n: {"D4", 0.5, "hide"},
+        n: {"C4", 0.5, "~hide"},
+        n: {"C4", 1, "it,"}
+      ],
+      # 50  unison: told ev-'ry-one in sight.
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "told"},
+        n: {"A4", 0.5, "ev-"},
+        n: {"G4", 0.5, "'ry-"},
+        n: {"G4", 0.75, "one"},
+        n: {"E4", 0.25, "in"},
+        n: {"E4", 0.5, "~in"},
+        n: {"E4", 0.5, "sight."}
+      ],
+      # 51  unison: (sight.)
+      [n: {"E4", 2, "~sight."}, rest: 2],
+      # 52  unison: All were a-mazed when
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "All"},
+        n: {"A4", 0.5, "were"},
+        n: {"G4", 0.5, "a-"},
+        n: {"G4", 1, "mazed"},
+        n: {"C5", 1, "when"}
+      ],
+      # 53  unison: they heard how God came
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "they"},
+        n: {"D4", 0.5, "heard"},
+        n: {"E4", 0.5, "how"},
+        n: {"D4", 0.5, "God"},
+        n: {"C4", 0.5, "~God"},
+        n: {"C4", 0.5, "came"},
+        rest: 0.5
+      ],
+      # 54  unison: down on the glo-ri-ous
+      #   ? small drift on "on"/"ri-" (unison)
+      [
+        n: {"E4", 0.75, "down"},
+        n: {"D4", 0.25, "on"},
+        n: {"D4", 0.5, "~on"},
+        n: {"C4", 0.5, "the"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.25, "ri-"},
+        n: {"D4", 0.5, "~ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 55  unison: night. God came
+      [n: {"C4", 2, "night."}, rest: 0.5, n: {"E4", 0.75, "God"}, n: {"G4", 0.75, "came"}],
+      # 56  down on this glo-ri-ous  ok: divides on "glo-ri-ous": top note (as melody)
+      #   ? "ous" reads the alto/bass F
+      [
+        n: {"A4", 0.75, "down"},
+        n: {"A4", 0.75, "on"},
+        n: {"G4", 0.5, "this"},
+        n: {"A4", 0.75, "glo-"},
+        n: {"A4", 0.75, "ri-"},
+        n: {"C5", 0.5, "ous"}
+      ],
+      # 57  night. I hear the  ok: divisi C5/E4 on "night": top note
+      #   ? "I" scooped
+      [
+        n: {"C5", 2, "night."},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "hear"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 58  an-gels sing-ing,
+      [n: {"F4", 1, "an-"}, n: {"F4", 1, "gels"}, n: {"E4", 1, "sing-"}, n: {"E4", 1, "ing,"}],
+      # 59  Hal-le-lu-jah! Let the
+      [
+        rest: 1,
+        n: {"G4", 0.5, "Hal-"},
+        n: {"G4", 0.5, "le-"},
+        n: {"G4", 0.5, "lu-"},
+        n: {"A4", 0.5, "jah!"},
+        n: {"F4", 0.5, "Let"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 60  earth re-ceive her
+      [
+        n: {"A4", 1, "earth"},
+        n: {"A4", 1, "re-"},
+        n: {"G4", 1, "ceive"},
+        n: {"A4", 0.5, "her"},
+        n: {"G4", 0.5, "~her"}
+      ],
+      # 61  King! I know that
+      [
+        n: {"G4", 2, "King!"},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "know"},
+        n: {"E4", 0.5, "that"}
+      ],
+      # 62  Love has come,
+      [n: {"F4", 1, "Love"}, n: {"F4", 1, "has"}, n: {"E4", 2, "come,"}],
+      # 63  sing it out,
+      #   ? "sing" reads C5 (also on bar 32's same chord); score G4, D4+G4 chord
+      [
+        rest: 1,
+        n: {"G4", 0.5, "sing"},
+        n: {"G4", 0.5, "it"},
+        n: {"G4", 0.5, "out,"},
+        n: {"A4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 64  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 65  born!
+      [n: {"G4", 3, "born!"}, rest: 1],
+      # 66  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"C5", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 67  born!
+      [n: {"G4", 4, "born!"}],
+      # 68  (piano interlude)
+      [rest: 4],
+      # 69  (piano interlude)
+      [rest: 4],
+      # 70  WOMEN unison: Glo-ri-ous,
+      [
+        n: {"C4", 0.75, "Glo-"},
+        n: {"D4", 0.75, "~Glo-"},
+        n: {"E4", 0.5, "ri-"},
+        n: {"G4", 1, "ous,"},
+        rest: 1
+      ],
+      # 71  WOMEN unison: glo-ri-ous,
+      [
+        n: {"C4", 0.75, "glo-"},
+        n: {"D4", 0.75, "~glo-"},
+        n: {"E4", 0.5, "ri-"},
+        n: {"G4", 1, "ous,"},
+        n: {"E4", 1, "~ous,"}
+      ],
+      # 72  WOMEN unison: what a glo-ri-ous
+      [
+        rest: 1,
+        n: {"G4", 0.5, "what"},
+        n: {"G4", 0.5, "a"},
+        n: {"A4", 0.75, "glo-"},
+        n: {"E4", 0.75, "ri-"},
+        n: {"E4", 0.5, "ous"}
+      ],
+      # 73  WOMEN unison: night.
+      [n: {"E4", 0.5, "night."}, n: {"D4", 1.5, "~night."}, rest: 2],
+      # 74  (rest: men only)
+      [rest: 4],
+      # 75  (rest: men only)
+      [rest: 4],
+      # 76  unison: what a glo-ri-ous
+      [
+        rest: 1,
+        n: {"G4", 0.5, "what"},
+        n: {"G4", 0.5, "a"},
+        n: {"A4", 0.75, "glo-"},
+        n: {"E4", 0.75, "ri-"},
+        n: {"E4", 0.5, "ous"}
+      ],
+      # 77  night. I hear the
+      [
+        n: {"E4", 0.5, "night."},
+        n: {"D4", 1.5, "~night."},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "hear"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 78  an-gels sing-ing,
+      [n: {"F4", 1, "an-"}, n: {"F4", 1, "gels"}, n: {"E4", 1, "sing-"}, n: {"E4", 1, "ing,"}],
+      # 79  Hal-le-lu-jah! Let the
+      [
+        rest: 1,
+        n: {"G4", 0.5, "Hal-"},
+        n: {"G4", 0.5, "le-"},
+        n: {"G4", 0.5, "lu-"},
+        n: {"A4", 0.5, "jah!"},
+        n: {"F4", 0.5, "Let"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 80  earth re-ceive her
+      [
+        n: {"A4", 1, "earth"},
+        n: {"A4", 1, "re-"},
+        n: {"G4", 1, "ceive"},
+        n: {"A4", 0.5, "her"},
+        n: {"G4", 0.5, "~her"}
+      ],
+      # 81  King! I know that
+      [
+        n: {"G4", 2, "King!"},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "know"},
+        n: {"E4", 0.5, "that"}
+      ],
+      # 82  Love has come,
+      [n: {"F4", 1, "Love"}, n: {"F4", 1, "has"}, n: {"E4", 2, "come,"}],
+      # 83  sing it out,
+      #   ? "sing" reads C5 (also on bar 32's same chord); score G4, D4+G4 chord
+      [
+        rest: 1,
+        n: {"G4", 0.5, "sing"},
+        n: {"G4", 0.5, "it"},
+        n: {"G4", 0.5, "out,"},
+        n: {"A4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 84  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"C5", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 85  born! I hear the
+      [
+        n: {"G4", 2, "born!"},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "hear"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 86  an-gels sing-ing,
+      [n: {"F4", 1, "an-"}, n: {"F4", 1, "gels"}, n: {"E4", 1, "sing-"}, n: {"E4", 1, "ing,"}],
+      # 87  Hal-le-lu-jah! Let the
+      [
+        rest: 1,
+        n: {"G4", 0.5, "Hal-"},
+        n: {"G4", 0.5, "le-"},
+        n: {"G4", 0.5, "lu-"},
+        n: {"A4", 0.5, "jah!"},
+        n: {"F4", 0.5, "Let"},
+        n: {"E4", 0.5, "the"}
+      ],
+      # 88  earth re-ceive her
+      #   ? "her" sung as A4 on this repeat; score G4 like bars 33/60/80
+      [
+        n: {"A4", 1, "earth"},
+        n: {"A4", 1, "re-"},
+        n: {"G4", 1, "ceive"},
+        n: {"A4", 0.5, "her"},
+        n: {"G4", 0.5, "~her"}
+      ],
+      # 89  King! I know that
+      [
+        n: {"G4", 2, "King!"},
+        rest: 0.5,
+        n: {"G4", 0.5, "I"},
+        n: {"F4", 0.5, "know"},
+        n: {"E4", 0.5, "that"}
+      ],
+      # 90  Love has come,
+      [n: {"F4", 1, "Love"}, n: {"F4", 1, "has"}, n: {"E4", 2, "come,"}],
+      # 91  sing it out,
+      #   ? "sing" reads C5 (also on bar 32's same chord); score G4, D4+G4 chord
+      [
+        rest: 1,
+        n: {"G4", 0.5, "sing"},
+        n: {"G4", 0.5, "it"},
+        n: {"G4", 0.5, "out,"},
+        n: {"A4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 92  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 93  born!
+      [n: {"G4", 3, "born!"}, rest: 1],
+      # 94  Je-sus Christ is
+      [
+        n: {"A4", 1, "Je-"},
+        n: {"A4", 1, "sus"},
+        n: {"C5", 1, "Christ"},
+        n: {"A4", 0.5, "is"},
+        n: {"G4", 0.5, "~is"}
+      ],
+      # 95  born!
+      [n: {"G4", 3, "born!"}, rest: 1],
+      # 96  Glo-
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"C5", 2, "Glo-"},
+        n: {"D5", 0.5, "~Glo-"},
+        n: {"C5", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"}
+      ],
+      # 97  (Glo-)
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2, "~Glo-"},
+        n: {"B4", 0.5, "~Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 1, "~Glo-"}
+      ],
+      # 98  (Glo-)  ok: half tied to the beat-3 A4
+      #   ? off-pitch readings are the tenor an octave up; 400 dpi confirms
+      [
+        n: {"A4", 2.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 99  (Glo-) ri-a
+      [n: {"G4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 100  in ex-cel-sis
+      [n: {"E4", 1, "in"}, n: {"F4", 1, "ex-"}, n: {"G4", 1, "cel-"}, n: {"A4", 1, "sis"}],
+      # 101  De-  ok: half tied to the dotted quarter
+      [n: {"G4", 3.5, "De-"}, n: {"F4", 0.5, "~De-"}],
+      # 102  o!
+      [n: {"E4", 4, "o!"}],
+      # 103  unison
+      [rest: 4],
+      # 104  unison: All is calm now,
+      [
+        rest: 1,
+        n: {"A4", 0.5, "All"},
+        n: {"G4", 0.5, "is"},
+        n: {"G4", 1, "calm"},
+        n: {"C5", 1, "now,"}
+      ],
+      # 105  unison: all is qui-et. A
+      [
+        rest: 1,
+        n: {"D4", 0.5, "all"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "qui-"},
+        n: {"C4", 0.5, "et."},
+        rest: 0.5,
+        n: {"C4", 0.5, "A"}
+      ],
+      # 106  unison: star shin-ing in the sky.
+      [
+        n: {"A4", 0.75, "star"},
+        n: {"G4", 0.75, "shin-"},
+        n: {"G4", 0.5, "ing"},
+        n: {"G4", 0.75, "in"},
+        n: {"E4", 0.75, "the"},
+        n: {"E4", 0.5, "sky."}
+      ],
+      # 107  unison: (sky.)
+      [n: {"E4", 2, "~sky."}, rest: 2],
+      # 108  unison: Be-low in Beth-le-hem,
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "Be-"},
+        n: {"A4", 0.5, "low"},
+        n: {"G4", 0.5, "in"},
+        n: {"G4", 0.5, "Beth-"},
+        n: {"E4", 0.5, "le-"},
+        n: {"E4", 1, "hem,"}
+      ],
+      # 109  unison: the King is sleep-ing.
+      #   ? unison sags at the rit.
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "the"},
+        n: {"D4", 0.5, "King"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "sleep-"},
+        n: {"C4", 0.5, "~sleep-"},
+        n: {"C4", 0.5, "ing."},
+        rest: 0.5
+      ],
+      # 110  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 111  unison: night.
+      [n: {"C4", 2, "night."}, rest: 2],
+      # 112  unison: Oh, what a glo-ri-ous
+      #   ? unison sags at the rit.
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 113  unison: night.
+      [n: {"C4", 4, "night."}]
+    ]
+  end
+
+  defp alto_bars do
+    [
+      # 1  (instrumental intro)
+      [rest: 4],
+      # 2  (instrumental intro)
+      [rest: 4],
+      # 3  (instrumental intro)
+      [rest: 4],
+      # 4  (instrumental intro)
+      [rest: 4],
+      # 5  (instrumental intro)
+      [rest: 4],
+      # 6  (instrumental intro)
+      [rest: 4],
+      # 7  (instrumental intro)
+      [rest: 4],
+      # 8  (instrumental intro)
+      [rest: 4],
+      # 9  (instrumental intro)
+      [rest: 4],
+      # 10  (instrumental intro)
+      [rest: 4],
+      # 11  (instrumental intro)
+      [rest: 4],
+      # 12  (instrumental intro)
+      [rest: 4],
+      # 13  Glo-  (mel.)
+      #   ? the G4 reads the sopranos' C5 above
+      [
+        n: {"G4", 2, "Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 14  (Glo-)  (mel.)
+      [
+        n: {"F4", 2, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"}
+      ],
+      # 15  (Glo-)  (mel.)
+      [
+        n: {"E4", 2, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 16  (Glo-) ri-a  (mel.)
+      [n: {"D4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 17  in ex-cel-sis  (mel.)
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"E4", 1, "cel-"}, n: {"F4", 1, "sis"}],
+      # 18  De-  (mel.)
+      #   ? score E4-D4-C4 (mel. line); sopranos hold G4 above and drown it
+      [n: {"E4", 2, "De-"}, n: {"D4", 1.5, "~De-"}, n: {"C4", 0.5, "~De-"}],
+      # 19  o!  (mel.)
+      [n: {"C4", 4, "o!"}],
+      # 20  unison: The shep-herds came to
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "The"},
+        n: {"A4", 0.5, "shep-"},
+        n: {"G4", 0.5, "herds"},
+        n: {"G4", 1, "came"},
+        n: {"C5", 1, "to"}
+      ],
+      # 21  unison: see the Ba-by,
+      [
+        rest: 1,
+        n: {"D4", 0.5, "see"},
+        n: {"E4", 0.5, "the"},
+        n: {"D4", 0.5, "Ba-"},
+        n: {"C4", 0.5, "~Ba-"},
+        n: {"C4", 1, "by,"}
+      ],
+      # 22  unison: stood by His moth-er's side
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "stood"},
+        n: {"A4", 0.5, "by"},
+        n: {"G4", 0.5, "His"},
+        n: {"G4", 0.75, "moth-"},
+        n: {"E4", 0.75, "er's"},
+        n: {"E4", 0.5, "side"}
+      ],
+      # 23  unison: (side)
+      [n: {"E4", 2, "~side"}, rest: 2],
+      # 24  unison: Here laid the Sav-ior
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "Here"},
+        n: {"A4", 0.5, "laid"},
+        n: {"G4", 0.5, "the"},
+        n: {"G4", 1, "Sav-"},
+        n: {"C5", 1, "ior"}
+      ],
+      # 25  unison: in-side a man-ger.
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "in-"},
+        n: {"D4", 0.5, "side"},
+        n: {"E4", 0.5, "a"},
+        n: {"D4", 0.5, "man-"},
+        n: {"C4", 0.5, "~man-"},
+        n: {"C4", 0.5, "ger."},
+        rest: 0.5
+      ],
+      # 26  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 27  unison: night.
+      [n: {"C4", 2, "night."}, rest: 2],
+      # 28  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 29  unison: night.
+      [n: {"C4", 4, "night."}],
+      # 30  I hear the  (mel.)
+      [rest: 2.5, n: {"E4", 0.5, "I"}, n: {"D4", 0.5, "hear"}, n: {"C4", 0.5, "the"}],
+      # 31  an-gels sing-ing,
+      #   ? "sing-" scooped
+      [n: {"C4", 1, "an-"}, n: {"C4", 1, "gels"}, n: {"C4", 1, "sing-"}, n: {"C4", 1, "ing,"}],
+      # 32  Hal-le-lu-jah! Let the
+      #   ? D4 reads the sopranos' G4 above
+      [
+        rest: 1,
+        n: {"D4", 0.5, "Hal-"},
+        n: {"D4", 0.5, "le-"},
+        n: {"D4", 0.5, "lu-"},
+        n: {"E4", 0.5, "jah!"},
+        n: {"D4", 0.5, "Let"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 33  earth re-ceive her
+      [
+        n: {"F4", 1, "earth"},
+        n: {"F4", 1, "re-"},
+        n: {"E4", 1, "ceive"},
+        n: {"E4", 0.5, "her"},
+        n: {"D4", 0.5, "~her"}
+      ],
+      # 34  King!" I know that
+      #   ? D4 reads the sopranos' G4 above
+      [
+        n: {"D4", 2, "King!\""},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "know"},
+        n: {"C4", 0.5, "that"}
+      ],
+      # 35  Love has come,
+      [n: {"C4", 1, "Love"}, n: {"C4", 1, "has"}, n: {"C4", 2, "come,"}],
+      # 36  sing it out,
+      [
+        rest: 1,
+        n: {"D4", 0.5, "sing"},
+        n: {"D4", 0.5, "it"},
+        n: {"D4", 0.5, "out,"},
+        n: {"E4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 37  Je-sus Christ is
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 38  born!
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 3, "born!"}, rest: 1],
+      # 39  Je-sus Christ is
+      #   ? "is" reads the sopranos' A4-G4 above
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 40  born!
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 3, "born!"}, rest: 1],
+      # 41  Glo-  (mel.)
+      #   ? the G4 reads the sopranos' C5 above
+      [
+        n: {"G4", 2, "Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 42  (Glo-)  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [
+        n: {"F4", 2, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"}
+      ],
+      # 43  (Glo-)  (mel.)
+      [
+        n: {"E4", 2, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 44  (Glo-) ri-a  (mel.)
+      [n: {"D4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 45  in ex-cel-sis  (mel.)
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"E4", 1, "cel-"}, n: {"F4", 1, "sis"}],
+      # 46  De-  (mel.)
+      #   ? score E4-D4-C4 (mel. line); sopranos hold G4 above and drown it
+      [n: {"E4", 2, "De-"}, n: {"D4", 1.5, "~De-"}, n: {"C4", 0.5, "~De-"}],
+      # 47  o!  (mel.)
+      [n: {"C4", 4, "o!"}],
+      # 48  unison: The shep-herds won-dered,
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "The"},
+        n: {"A4", 0.5, "shep-"},
+        n: {"G4", 0.5, "herds"},
+        n: {"G4", 1, "won-"},
+        n: {"C5", 1, "dered,"}
+      ],
+      # 49  unison: they could-n't hide it,
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "they"},
+        n: {"D4", 0.5, "could-"},
+        n: {"E4", 0.5, "n't"},
+        n: {"D4", 0.5, "hide"},
+        n: {"C4", 0.5, "~hide"},
+        n: {"C4", 1, "it,"}
+      ],
+      # 50  unison: told ev-'ry-one in sight.
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "told"},
+        n: {"A4", 0.5, "ev-"},
+        n: {"G4", 0.5, "'ry-"},
+        n: {"G4", 0.75, "one"},
+        n: {"E4", 0.25, "in"},
+        n: {"E4", 0.5, "~in"},
+        n: {"E4", 0.5, "sight."}
+      ],
+      # 51  unison: (sight.)
+      [n: {"E4", 2, "~sight."}, rest: 2],
+      # 52  unison: All were a-mazed when
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "All"},
+        n: {"A4", 0.5, "were"},
+        n: {"G4", 0.5, "a-"},
+        n: {"G4", 1, "mazed"},
+        n: {"C5", 1, "when"}
+      ],
+      # 53  unison: they heard how God came
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "they"},
+        n: {"D4", 0.5, "heard"},
+        n: {"E4", 0.5, "how"},
+        n: {"D4", 0.5, "God"},
+        n: {"C4", 0.5, "~God"},
+        n: {"C4", 0.5, "came"},
+        rest: 0.5
+      ],
+      # 54  unison: down on the glo-ri-ous
+      #   ? small drift (unison)
+      [
+        n: {"E4", 0.75, "down"},
+        n: {"D4", 0.25, "on"},
+        n: {"D4", 0.5, "~on"},
+        n: {"C4", 0.5, "the"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.25, "ri-"},
+        n: {"D4", 0.5, "~ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 55  unison: night. God came
+      [n: {"C4", 2, "night."}, rest: 0.5, n: {"E4", 0.75, "God"}, n: {"G4", 0.75, "came"}],
+      # 56  down on this glo-ri-ous  ok: divides on "glo-ri-ous": lower note
+      [
+        n: {"A4", 0.75, "down"},
+        n: {"A4", 0.75, "on"},
+        n: {"G4", 0.5, "this"},
+        n: {"F4", 0.75, "glo-"},
+        n: {"F4", 0.75, "ri-"},
+        n: {"F4", 0.5, "ous"}
+      ],
+      # 57  night. I hear the  (mel.)  ok: divisi C5/E4 on "night": lower note
+      [
+        n: {"E4", 2, "night."},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "hear"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 58  an-gels sing-ing,  (mel.)
+      #   ? "sing-" scooped
+      [n: {"C4", 1, "an-"}, n: {"C4", 1, "gels"}, n: {"C4", 1, "sing-"}, n: {"C4", 1, "ing,"}],
+      # 59  Hal-le-lu-jah! Let the  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [
+        rest: 1,
+        n: {"D4", 0.5, "Hal-"},
+        n: {"D4", 0.5, "le-"},
+        n: {"D4", 0.5, "lu-"},
+        n: {"E4", 0.5, "jah!"},
+        n: {"D4", 0.5, "Let"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 60  earth re-ceive her  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [
+        n: {"F4", 1, "earth"},
+        n: {"F4", 1, "re-"},
+        n: {"E4", 1, "ceive"},
+        n: {"E4", 0.5, "her"},
+        n: {"D4", 0.5, "~her"}
+      ],
+      # 61  King! I know that  (mel.)
+      #   ? "I" reads D4/C4; 400 dpi: E4 under G4 (thirds)
+      [
+        n: {"D4", 2, "King!"},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "know"},
+        n: {"C4", 0.5, "that"}
+      ],
+      # 62  Love has come,  (mel.)
+      [n: {"C4", 1, "Love"}, n: {"C4", 1, "has"}, n: {"C4", 2, "come,"}],
+      # 63  sing it out,  (mel.)
+      [
+        rest: 1,
+        n: {"D4", 0.5, "sing"},
+        n: {"D4", 0.5, "it"},
+        n: {"D4", 0.5, "out,"},
+        n: {"E4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 64  Je-sus Christ is  (mel.)
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 65  born!  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 3, "born!"}, rest: 1],
+      # 66  Je-sus Christ is  (mel.)
+      #   ? "is" reads the sopranos' A4-G4 above
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 67  born!  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 4, "born!"}],
+      # 68  (piano interlude)
+      [rest: 4],
+      # 69  (piano interlude)
+      [rest: 4],
+      # 70  WOMEN unison: Glo-ri-ous,
+      [
+        n: {"C4", 0.75, "Glo-"},
+        n: {"D4", 0.75, "~Glo-"},
+        n: {"E4", 0.5, "ri-"},
+        n: {"G4", 1, "ous,"},
+        rest: 1
+      ],
+      # 71  WOMEN unison: glo-ri-ous,
+      [
+        n: {"C4", 0.75, "glo-"},
+        n: {"D4", 0.75, "~glo-"},
+        n: {"E4", 0.5, "ri-"},
+        n: {"G4", 1, "ous,"},
+        n: {"E4", 1, "~ous,"}
+      ],
+      # 72  WOMEN unison: what a glo-ri-ous
+      [
+        rest: 1,
+        n: {"G4", 0.5, "what"},
+        n: {"G4", 0.5, "a"},
+        n: {"A4", 0.75, "glo-"},
+        n: {"E4", 0.75, "ri-"},
+        n: {"E4", 0.5, "ous"}
+      ],
+      # 73  WOMEN unison: night.
+      [n: {"E4", 0.5, "night."}, n: {"D4", 1.5, "~night."}, rest: 2],
+      # 74  (rest: men only)
+      [rest: 4],
+      # 75  (rest: men only)
+      [rest: 4],
+      # 76  unison: what a glo-ri-ous
+      [
+        rest: 1,
+        n: {"G4", 0.5, "what"},
+        n: {"G4", 0.5, "a"},
+        n: {"A4", 0.75, "glo-"},
+        n: {"E4", 0.75, "ri-"},
+        n: {"E4", 0.5, "ous"}
+      ],
+      # 77  night. I hear the  (mel.)
+      #   ? "I" scooped
+      [
+        n: {"E4", 0.5, "night."},
+        n: {"D4", 1.5, "~night."},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "hear"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 78  an-gels sing-ing,  (mel.)
+      #   ? "sing-" scooped
+      [n: {"C4", 1, "an-"}, n: {"C4", 1, "gels"}, n: {"C4", 1, "sing-"}, n: {"C4", 1, "ing,"}],
+      # 79  Hal-le-lu-jah! Let the  (mel.)
+      #   ? D4 reads the sopranos' G4 above
+      [
+        rest: 1,
+        n: {"D4", 0.5, "Hal-"},
+        n: {"D4", 0.5, "le-"},
+        n: {"D4", 0.5, "lu-"},
+        n: {"E4", 0.5, "jah!"},
+        n: {"D4", 0.5, "Let"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 80  earth re-ceive her  (mel.)
+      [
+        n: {"F4", 1, "earth"},
+        n: {"F4", 1, "re-"},
+        n: {"E4", 1, "ceive"},
+        n: {"E4", 0.5, "her"},
+        n: {"D4", 0.5, "~her"}
+      ],
+      # 81  King! I know that
+      #   ? "I" reads D4/C4; 400 dpi: E4 under G4 (thirds)
+      [
+        n: {"D4", 2, "King!"},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "know"},
+        n: {"C4", 0.5, "that"}
+      ],
+      # 82  Love has come,
+      [n: {"C4", 1, "Love"}, n: {"C4", 1, "has"}, n: {"C4", 2, "come,"}],
+      # 83  sing it out,
+      [
+        rest: 1,
+        n: {"D4", 0.5, "sing"},
+        n: {"D4", 0.5, "it"},
+        n: {"D4", 0.5, "out,"},
+        n: {"E4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 84  Je-sus Christ is
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 85  born! I hear the
+      #   ? "I" scooped
+      [
+        n: {"D4", 2, "born!"},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "hear"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 86  an-gels sing-ing,
+      #   ? "sing-" scooped
+      [n: {"C4", 1, "an-"}, n: {"C4", 1, "gels"}, n: {"C4", 1, "sing-"}, n: {"C4", 1, "ing,"}],
+      # 87  Hal-le-lu-jah! Let the
+      #   ? D4 reads the sopranos' G4 above
+      [
+        rest: 1,
+        n: {"D4", 0.5, "Hal-"},
+        n: {"D4", 0.5, "le-"},
+        n: {"D4", 0.5, "lu-"},
+        n: {"E4", 0.5, "jah!"},
+        n: {"D4", 0.5, "Let"},
+        n: {"C4", 0.5, "the"}
+      ],
+      # 88  earth re-ceive her
+      #   ? D4 reads the sopranos' G4 above
+      [
+        n: {"F4", 1, "earth"},
+        n: {"F4", 1, "re-"},
+        n: {"E4", 1, "ceive"},
+        n: {"E4", 0.5, "her"},
+        n: {"D4", 0.5, "~her"}
+      ],
+      # 89  King! I know that
+      #   ? "I" reads D4/C4; 400 dpi: E4 under G4 (thirds)
+      [
+        n: {"D4", 2, "King!"},
+        rest: 0.5,
+        n: {"E4", 0.5, "I"},
+        n: {"D4", 0.5, "know"},
+        n: {"C4", 0.5, "that"}
+      ],
+      # 90  Love has come,
+      [n: {"C4", 1, "Love"}, n: {"C4", 1, "has"}, n: {"C4", 2, "come,"}],
+      # 91  sing it out,
+      [
+        rest: 1,
+        n: {"D4", 0.5, "sing"},
+        n: {"D4", 0.5, "it"},
+        n: {"D4", 0.5, "out,"},
+        n: {"E4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 92  Je-sus Christ is
+      #   ? "is" reads the tenor C4
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 93  born!
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 3, "born!"}, rest: 1],
+      # 94  Je-sus Christ is
+      #   ? "is" reads the sopranos' A4-G4 above
+      [
+        n: {"F4", 1, "Je-"},
+        n: {"F4", 1, "sus"},
+        n: {"G4", 1, "Christ"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "~is"}
+      ],
+      # 95  born!
+      #   ? D4 reads the sopranos' G4 above
+      [n: {"D4", 3, "born!"}, rest: 1],
+      # 96  Glo-  (mel.)
+      #   ? the G4 reads the sopranos' C5 above
+      [
+        n: {"G4", 2, "Glo-"},
+        n: {"A4", 0.5, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"}
+      ],
+      # 97  (Glo-)  (mel.)
+      [
+        n: {"F4", 2, "~Glo-"},
+        n: {"G4", 0.5, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"}
+      ],
+      # 98  (Glo-)  (mel.)
+      [
+        n: {"E4", 2, "~Glo-"},
+        n: {"F4", 0.5, "~Glo-"},
+        n: {"E4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 99  (Glo-) ri-a  (mel.)
+      [n: {"D4", 1.5, "~Glo-"}, n: {"G4", 0.5, "ri-"}, n: {"G4", 1, "a"}, rest: 1],
+      # 100  in ex-cel-sis  (mel.)
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"E4", 1, "cel-"}, n: {"F4", 1, "sis"}],
+      # 101  De-  (mel.)
+      #   ? score E4-D4-C4 (mel. line); sopranos hold G4 above and drown it
+      [n: {"E4", 2, "De-"}, n: {"D4", 1.5, "~De-"}, n: {"C4", 0.5, "~De-"}],
+      # 102  o!  (mel.)
+      [n: {"C4", 4, "o!"}],
+      # 103  unison
+      [rest: 4],
+      # 104  unison: All is calm now,
+      [
+        rest: 1,
+        n: {"A4", 0.5, "All"},
+        n: {"G4", 0.5, "is"},
+        n: {"G4", 1, "calm"},
+        n: {"C5", 1, "now,"}
+      ],
+      # 105  unison: all is qui-et. A
+      [
+        rest: 1,
+        n: {"D4", 0.5, "all"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "qui-"},
+        n: {"C4", 0.5, "et."},
+        rest: 0.5,
+        n: {"C4", 0.5, "A"}
+      ],
+      # 106  unison: star shin-ing in the sky.
+      [
+        n: {"A4", 0.75, "star"},
+        n: {"G4", 0.75, "shin-"},
+        n: {"G4", 0.5, "ing"},
+        n: {"G4", 0.75, "in"},
+        n: {"E4", 0.75, "the"},
+        n: {"E4", 0.5, "sky."}
+      ],
+      # 107  unison: (sky.)
+      [n: {"E4", 2, "~sky."}, rest: 2],
+      # 108  unison: Be-low in Beth-le-hem,
+      [
+        rest: 0.5,
+        n: {"G4", 0.5, "Be-"},
+        n: {"A4", 0.5, "low"},
+        n: {"G4", 0.5, "in"},
+        n: {"G4", 0.5, "Beth-"},
+        n: {"E4", 0.5, "le-"},
+        n: {"E4", 1, "hem,"}
+      ],
+      # 109  unison: the King is sleep-ing.
+      #   ? unison sags at the rit.
+      [
+        rest: 0.5,
+        n: {"D4", 0.5, "the"},
+        n: {"D4", 0.5, "King"},
+        n: {"E4", 0.5, "is"},
+        n: {"D4", 0.5, "sleep-"},
+        n: {"C4", 0.5, "~sleep-"},
+        n: {"C4", 0.5, "ing."},
+        rest: 0.5
+      ],
+      # 110  unison: Oh, what a glo-ri-ous
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 111  unison: night.
+      [n: {"C4", 2, "night."}, rest: 2],
+      # 112  unison: Oh, what a glo-ri-ous
+      #   ? unison sags at the rit.
+      [
+        n: {"E4", 0.75, "Oh,"},
+        n: {"D4", 0.75, "what"},
+        n: {"C4", 0.5, "a"},
+        n: {"E4", 0.75, "glo-"},
+        n: {"D4", 0.75, "ri-"},
+        n: {"C4", 0.5, "ous"}
+      ],
+      # 113  unison: night.
+      [n: {"C4", 4, "night."}]
+    ]
+  end
+
+  defp tenor_bars do
+    [
+      # 1  (instrumental intro)
+      [rest: 4],
+      # 2  (instrumental intro)
+      [rest: 4],
+      # 3  (instrumental intro)
+      [rest: 4],
+      # 4  (instrumental intro)
+      [rest: 4],
+      # 5  (instrumental intro)
+      [rest: 4],
+      # 6  (instrumental intro)
+      [rest: 4],
+      # 7  (instrumental intro)
+      [rest: 4],
+      # 8  (instrumental intro)
+      [rest: 4],
+      # 9  (instrumental intro)
+      [rest: 4],
+      # 10  (instrumental intro)
+      [rest: 4],
+      # 11  (instrumental intro)
+      [rest: 4],
+      # 12  (instrumental intro)
+      [rest: 4],
+      # 13  Glo-
+      [
+        n: {"E4", 2, "Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 14  (Glo-)  ok: half tied to beat 3
+      [n: {"D4", 3, "~Glo-"}, n: {"B3", 1, "~Glo-"}],
+      # 15  (Glo-)  ok: half tied to beat 3
+      [n: {"C4", 3, "~Glo-"}, n: {"A3", 1, "~Glo-"}],
+      # 16  (Glo-) ri-a
+      [n: {"B3", 1.5, "~Glo-"}, n: {"G3", 0.5, "ri-"}, n: {"G3", 1, "a"}, rest: 1],
+      # 17  in ex-cel-sis
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"C4", 1, "cel-"}, n: {"D4", 1, "sis"}],
+      # 18  De-
+      [n: {"C4", 2, "De-"}, n: {"B3", 1.5, "~De-"}, n: {"A3", 0.5, "~De-"}],
+      # 19  o!
+      #   ? G3 reads the bass/alto C
+      [n: {"G3", 4, "o!"}],
+      # 20  with the bass: The shep-herds came to
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "The"},
+        n: {"A3", 0.5, "shep-"},
+        n: {"G3", 0.5, "herds"},
+        n: {"G3", 1, "came"},
+        n: {"C4", 1, "to"}
+      ],
+      # 21  with the bass: see the Ba-by,
+      [
+        rest: 1,
+        n: {"D3", 0.5, "see"},
+        n: {"E3", 0.5, "the"},
+        n: {"D3", 0.5, "Ba-"},
+        n: {"C3", 0.5, "~Ba-"},
+        n: {"C3", 1, "by,"}
+      ],
+      # 22  with the bass: stood by His moth-er's side
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "stood"},
+        n: {"A3", 0.5, "by"},
+        n: {"G3", 0.5, "His"},
+        n: {"G3", 0.75, "moth-"},
+        n: {"E3", 0.75, "er's"},
+        n: {"E3", 0.5, "side"}
+      ],
+      # 23  with the bass: (side)
+      [n: {"E3", 2, "~side"}, rest: 2],
+      # 24  with the bass: Here laid the Sav-ior
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "Here"},
+        n: {"A3", 0.5, "laid"},
+        n: {"G3", 0.5, "the"},
+        n: {"G3", 1, "Sav-"},
+        n: {"C4", 1, "ior"}
+      ],
+      # 25  with the bass: in-side a man-ger.
+      [
+        rest: 0.5,
+        n: {"D3", 0.5, "in-"},
+        n: {"D3", 0.5, "side"},
+        n: {"E3", 0.5, "a"},
+        n: {"D3", 0.5, "man-"},
+        n: {"C3", 0.5, "~man-"},
+        n: {"C3", 0.5, "ger."},
+        rest: 0.5
+      ],
+      # 26  with the bass: Oh, what a glo-ri-ous
+      [
+        n: {"E3", 0.75, "Oh,"},
+        n: {"D3", 0.75, "what"},
+        n: {"C3", 0.5, "a"},
+        n: {"E3", 0.75, "glo-"},
+        n: {"D3", 0.75, "ri-"},
+        n: {"C3", 0.5, "ous"}
+      ],
+      # 27  with the bass: night.
+      [n: {"C3", 2, "night."}, rest: 2],
+      # 28  with the bass: Oh, what a glo-ri-ous
+      #   ? unison drift (rit. in 112)
+      [
+        n: {"E3", 0.75, "Oh,"},
+        n: {"D3", 0.75, "what"},
+        n: {"C3", 0.5, "a"},
+        n: {"E3", 0.75, "glo-"},
+        n: {"D3", 0.75, "ri-"},
+        n: {"C3", 0.5, "ous"}
+      ],
+      # 29  with the bass: night.
+      [n: {"C3", 4, "night."}],
+      # 30  I hear the
+      #   ? "hear" scooped / reads the bass D; "the" reads the bass C
+      [rest: 2.5, n: {"C4", 0.5, "I"}, n: {"A3", 0.5, "hear"}, n: {"G3", 0.5, "the"}],
+      # 31  an-gels sing-ing,
+      #   ? G3 reads the bass C3
+      [n: {"A3", 1, "an-"}, n: {"A3", 1, "gels"}, n: {"G3", 1, "sing-"}, n: {"G3", 1, "ing,"}],
+      # 32  Hal-le-lu-jah! Let the
+      #   ? "the" G3 reads the bass C3
+      [
+        rest: 1,
+        n: {"B3", 0.5, "Hal-"},
+        n: {"B3", 0.5, "le-"},
+        n: {"B3", 0.5, "lu-"},
+        n: {"C4", 0.5, "jah!"},
+        n: {"A3", 0.5, "Let"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 33  earth re-ceive her
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "earth"},
+        n: {"C4", 1, "re-"},
+        n: {"C4", 1, "ceive"},
+        n: {"C4", 0.5, "her"},
+        n: {"B3", 0.5, "~her"}
+      ],
+      # 34  King!" I know that
+      #   ? B3 a touch sharp; "that" G3 reads the bass C3
+      [
+        n: {"B3", 2, "King!\""},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "know"},
+        n: {"G3", 0.5, "that"}
+      ],
+      # 35  Love has come,
+      [n: {"A3", 1, "Love"}, n: {"A3", 1, "has"}, n: {"G3", 2, "come,"}],
+      # 36  sing it out,
+      [
+        rest: 1,
+        n: {"B3", 0.5, "sing"},
+        n: {"B3", 0.5, "it"},
+        n: {"B3", 0.5, "out,"},
+        n: {"C4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 37  Je-sus Christ is
+      #   ? "Je-" reads the bass F3; 400 dpi: C4 then B3 on "is"
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"C4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 38  born!
+      [n: {"B3", 3, "born!"}, rest: 1],
+      # 39  Je-sus Christ is
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 40  born!
+      [n: {"B3", 3, "born!"}, rest: 1],
+      # 41  Glo-
+      [
+        n: {"E4", 2, "Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 42  (Glo-)  ok: half tied to beat 3
+      [n: {"D4", 3, "~Glo-"}, n: {"B3", 1, "~Glo-"}],
+      # 43  (Glo-)  ok: half tied to beat 3
+      [n: {"C4", 3, "~Glo-"}, n: {"A3", 1, "~Glo-"}],
+      # 44  (Glo-) ri-a
+      [n: {"B3", 1.5, "~Glo-"}, n: {"G3", 0.5, "ri-"}, n: {"G3", 1, "a"}, rest: 1],
+      # 45  in ex-cel-sis
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"C4", 1, "cel-"}, n: {"D4", 1, "sis"}],
+      # 46  De-
+      [n: {"C4", 2, "De-"}, n: {"B3", 1.5, "~De-"}, n: {"A3", 0.5, "~De-"}],
+      # 47  o!
+      #   ? G3 reads the bass/alto C
+      [n: {"G3", 4, "o!"}],
+      # 48  with the bass: The shep-herds won-dered,
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "The"},
+        n: {"A3", 0.5, "shep-"},
+        n: {"G3", 0.5, "herds"},
+        n: {"G3", 1, "won-"},
+        n: {"C4", 1, "dered,"}
+      ],
+      # 49  with the bass: they could-n't hide it,
+      [
+        rest: 0.5,
+        n: {"D3", 0.5, "they"},
+        n: {"D3", 0.5, "could-"},
+        n: {"E3", 0.5, "n't"},
+        n: {"D3", 0.5, "hide"},
+        n: {"C3", 0.5, "~hide"},
+        n: {"C3", 1, "it,"}
+      ],
+      # 50  with the bass: told ev-'ry-one in sight.
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "told"},
+        n: {"A3", 0.5, "ev-"},
+        n: {"G3", 0.5, "'ry-"},
+        n: {"G3", 0.75, "one"},
+        n: {"E3", 0.75, "in"},
+        n: {"E3", 0.5, "sight."}
+      ],
+      # 51  with the bass: (sight.)
+      [n: {"E3", 2, "~sight."}, rest: 2],
+      # 52  with the bass: All were a-mazed when
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "All"},
+        n: {"A3", 0.5, "were"},
+        n: {"G3", 0.5, "a-"},
+        n: {"G3", 1, "mazed"},
+        n: {"C4", 1, "when"}
+      ],
+      # 53  with the bass: they heard how God came
+      [
+        rest: 0.5,
+        n: {"D3", 0.5, "they"},
+        n: {"D3", 0.5, "heard"},
+        n: {"E3", 0.5, "how"},
+        n: {"D3", 0.5, "God"},
+        n: {"C3", 0.5, "~God"},
+        n: {"C3", 0.5, "came"},
+        rest: 0.5
+      ],
+      # 54  with the bass: down on the glo-ri-ous
+      [
+        n: {"E3", 0.75, "down"},
+        n: {"D3", 0.75, "on"},
+        n: {"C3", 0.5, "the"},
+        n: {"E3", 0.75, "glo-"},
+        n: {"D3", 0.75, "ri-"},
+        n: {"C3", 0.5, "ous"}
+      ],
+      # 55  with the bass: night. God came
+      [n: {"C3", 2, "night."}, rest: 0.5, n: {"E3", 0.75, "God"}, n: {"G3", 0.75, "came"}],
+      # 56  down on this glo-ri-ous  ok: divides on "glo-ri-ous": upper note, bass F3 below
+      [
+        n: {"A3", 0.75, "down"},
+        n: {"A3", 0.75, "on"},
+        n: {"G3", 0.5, "this"},
+        n: {"A3", 0.75, "glo-"},
+        n: {"A3", 0.75, "ri-"},
+        n: {"A3", 0.5, "ous"}
+      ],
+      # 57  night. I hear the
+      #   ? "hear" scooped / reads the bass D; "the" reads the bass C
+      [
+        n: {"C4", 2, "night."},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "hear"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 58  an-gels sing-ing,
+      #   ? G3 reads the bass C3
+      [n: {"A3", 1, "an-"}, n: {"A3", 1, "gels"}, n: {"G3", 1, "sing-"}, n: {"G3", 1, "ing,"}],
+      # 59  Hal-le-lu-jah! Let the
+      #   ? "the" G3 reads the bass C3
+      [
+        rest: 1,
+        n: {"B3", 0.5, "Hal-"},
+        n: {"B3", 0.5, "le-"},
+        n: {"B3", 0.5, "lu-"},
+        n: {"C4", 0.5, "jah!"},
+        n: {"A3", 0.5, "Let"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 60  earth re-ceive her
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "earth"},
+        n: {"C4", 1, "re-"},
+        n: {"C4", 1, "ceive"},
+        n: {"C4", 0.5, "her"},
+        n: {"B3", 0.5, "~her"}
+      ],
+      # 61  King! I know that
+      #   ? B3 a touch sharp; "that" G3 reads the bass C3
+      [
+        n: {"B3", 2, "King!"},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "know"},
+        n: {"G3", 0.5, "that"}
+      ],
+      # 62  Love has come,
+      [n: {"A3", 1, "Love"}, n: {"A3", 1, "has"}, n: {"G3", 2, "come,"}],
+      # 63  sing it out,
+      [
+        rest: 1,
+        n: {"B3", 0.5, "sing"},
+        n: {"B3", 0.5, "it"},
+        n: {"B3", 0.5, "out,"},
+        n: {"C4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 64  Je-sus Christ is
+      #   ? "Je-" reads the bass F3; 400 dpi: C4 then B3 on "is"
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"C4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 65  born!
+      [n: {"B3", 3, "born!"}, rest: 1],
+      # 66  Je-sus Christ is
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 67  born!
+      [n: {"B3", 4, "born!"}],
+      # 68  (piano interlude)
+      [rest: 4],
+      # 69  (piano interlude)
+      [rest: 4],
+      # 70  (rest: women only)
+      [rest: 4],
+      # 71  (rest: women only)
+      [rest: 4],
+      # 72  (rest: women only)
+      [rest: 4],
+      # 73  (rest: women only)
+      [rest: 4],
+      # 74  with the bass: Glo-ri-ous,
+      [
+        n: {"C3", 0.75, "Glo-"},
+        n: {"D3", 0.75, "~Glo-"},
+        n: {"E3", 0.5, "ri-"},
+        n: {"G3", 1, "ous,"},
+        rest: 1
+      ],
+      # 75  with the bass: glo-ri-ous,
+      [
+        n: {"C3", 0.75, "glo-"},
+        n: {"D3", 0.75, "~glo-"},
+        n: {"E3", 0.5, "ri-"},
+        n: {"G3", 1, "ous,"},
+        n: {"E3", 1, "~ous,"}
+      ],
+      # 76  with the bass: what a glo-ri-ous
+      [
+        rest: 1,
+        n: {"G3", 0.5, "what"},
+        n: {"G3", 0.5, "a"},
+        n: {"A3", 0.75, "glo-"},
+        n: {"E3", 0.75, "ri-"},
+        n: {"E3", 0.5, "ous"}
+      ],
+      # 77  night. I hear the
+      #   ? "hear" scooped / reads the bass D; "the" reads the bass C
+      [
+        n: {"E3", 0.5, "night."},
+        n: {"D3", 1.5, "~night."},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "hear"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 78  an-gels sing-ing,
+      #   ? G3 reads the bass C3
+      [n: {"A3", 1, "an-"}, n: {"A3", 1, "gels"}, n: {"G3", 1, "sing-"}, n: {"G3", 1, "ing,"}],
+      # 79  Hal-le-lu-jah! Let the
+      #   ? "the" G3 reads the bass C3
+      [
+        rest: 1,
+        n: {"B3", 0.5, "Hal-"},
+        n: {"B3", 0.5, "le-"},
+        n: {"B3", 0.5, "lu-"},
+        n: {"C4", 0.5, "jah!"},
+        n: {"A3", 0.5, "Let"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 80  earth re-ceive her
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "earth"},
+        n: {"C4", 1, "re-"},
+        n: {"C4", 1, "ceive"},
+        n: {"C4", 0.5, "her"},
+        n: {"B3", 0.5, "~her"}
+      ],
+      # 81  King! I know that
+      #   ? B3 a touch sharp; "that" G3 reads the bass C3
+      [
+        n: {"B3", 2, "King!"},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "know"},
+        n: {"G3", 0.5, "that"}
+      ],
+      # 82  Love has come,
+      [n: {"A3", 1, "Love"}, n: {"A3", 1, "has"}, n: {"G3", 2, "come,"}],
+      # 83  sing it out,
+      [
+        rest: 1,
+        n: {"B3", 0.5, "sing"},
+        n: {"B3", 0.5, "it"},
+        n: {"B3", 0.5, "out,"},
+        n: {"C4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 84  Je-sus Christ is
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 85  born! I hear the
+      #   ? "the" G3 reads the bass C3
+      [
+        n: {"B3", 2, "born!"},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "hear"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 86  an-gels sing-ing,
+      #   ? G3 reads the bass C3
+      [n: {"A3", 1, "an-"}, n: {"A3", 1, "gels"}, n: {"G3", 1, "sing-"}, n: {"G3", 1, "ing,"}],
+      # 87  Hal-le-lu-jah! Let the
+      #   ? "the" G3 reads the bass C3
+      [
+        rest: 1,
+        n: {"B3", 0.5, "Hal-"},
+        n: {"B3", 0.5, "le-"},
+        n: {"B3", 0.5, "lu-"},
+        n: {"C4", 0.5, "jah!"},
+        n: {"A3", 0.5, "Let"},
+        n: {"G3", 0.5, "the"}
+      ],
+      # 88  earth re-ceive her
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "earth"},
+        n: {"C4", 1, "re-"},
+        n: {"C4", 1, "ceive"},
+        n: {"C4", 0.5, "her"},
+        n: {"B3", 0.5, "~her"}
+      ],
+      # 89  King! I know that
+      #   ? B3 a touch sharp; "that" G3 reads the bass C3
+      [
+        n: {"B3", 2, "King!"},
+        rest: 0.5,
+        n: {"C4", 0.5, "I"},
+        n: {"A3", 0.5, "know"},
+        n: {"G3", 0.5, "that"}
+      ],
+      # 90  Love has come,
+      [n: {"A3", 1, "Love"}, n: {"A3", 1, "has"}, n: {"G3", 2, "come,"}],
+      # 91  sing it out,
+      [
+        rest: 1,
+        n: {"B3", 0.5, "sing"},
+        n: {"B3", 0.5, "it"},
+        n: {"B3", 0.5, "out,"},
+        n: {"C4", 0.5, "~out,"},
+        rest: 1
+      ],
+      # 92  Je-sus Christ is
+      #   ? "Je-" reads the bass F3; 400 dpi: C4 then B3 on "is"
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"C4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 93  born!
+      [n: {"B3", 3, "born!"}, rest: 1],
+      # 94  Je-sus Christ is
+      #   ? C4 reads the bass F3 under it
+      [
+        n: {"C4", 1, "Je-"},
+        n: {"C4", 1, "sus"},
+        n: {"E4", 1, "Christ"},
+        n: {"C4", 0.5, "is"},
+        n: {"B3", 0.5, "~is"}
+      ],
+      # 95  born!
+      [n: {"B3", 3, "born!"}, rest: 1],
+      # 96  Glo-
+      [
+        n: {"E4", 2, "Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"},
+        n: {"D4", 0.5, "~Glo-"},
+        n: {"C4", 0.5, "~Glo-"}
+      ],
+      # 97  (Glo-)  ok: half tied to beat 3
+      [n: {"D4", 3, "~Glo-"}, n: {"B3", 1, "~Glo-"}],
+      # 98  (Glo-)  ok: half tied to beat 3
+      [n: {"C4", 3, "~Glo-"}, n: {"A3", 1, "~Glo-"}],
+      # 99  (Glo-) ri-a
+      [n: {"B3", 1.5, "~Glo-"}, n: {"G3", 0.5, "ri-"}, n: {"G3", 1, "a"}, rest: 1],
+      # 100  in ex-cel-sis
+      [n: {"C4", 1, "in"}, n: {"D4", 1, "ex-"}, n: {"C4", 1, "cel-"}, n: {"D4", 1, "sis"}],
+      # 101  De-
+      [n: {"C4", 2, "De-"}, n: {"B3", 1.5, "~De-"}, n: {"A3", 0.5, "~De-"}],
+      # 102  o!
+      #   ? G3 reads the bass/alto C
+      [n: {"G3", 4, "o!"}],
+      # 103  with the bass
+      [rest: 4],
+      # 104  with the bass: All is calm now,
+      [
+        rest: 1,
+        n: {"A3", 0.5, "All"},
+        n: {"G3", 0.5, "is"},
+        n: {"G3", 1, "calm"},
+        n: {"C4", 1, "now,"}
+      ],
+      # 105  with the bass: all is qui-et. A
+      [
+        rest: 1,
+        n: {"D3", 0.5, "all"},
+        n: {"E3", 0.5, "is"},
+        n: {"D3", 0.5, "qui-"},
+        n: {"C3", 0.5, "et."},
+        rest: 0.5,
+        n: {"C3", 0.5, "A"}
+      ],
+      # 106  with the bass: star shin-ing in the sky.
+      [
+        n: {"A3", 0.75, "star"},
+        n: {"G3", 0.75, "shin-"},
+        n: {"G3", 0.5, "ing"},
+        n: {"G3", 0.75, "in"},
+        n: {"E3", 0.75, "the"},
+        n: {"E3", 0.5, "sky."}
+      ],
+      # 107  with the bass: (sky.)
+      [n: {"E3", 2, "~sky."}, rest: 2],
+      # 108  with the bass: Be-low in Beth-le-hem,
+      [
+        rest: 0.5,
+        n: {"G3", 0.5, "Be-"},
+        n: {"A3", 0.5, "low"},
+        n: {"G3", 0.5, "in"},
+        n: {"G3", 0.5, "Beth-"},
+        n: {"E3", 0.5, "le-"},
+        n: {"E3", 1, "hem,"}
+      ],
+      # 109  with the bass: the King is sleep-ing.
+      #   ? unison drift (rit. in 112)
+      [
+        rest: 0.5,
+        n: {"D3", 0.5, "the"},
+        n: {"D3", 0.5, "King"},
+        n: {"E3", 0.5, "is"},
+        n: {"D3", 0.5, "sleep-"},
+        n: {"C3", 0.5, "~sleep-"},
+        n: {"C3", 0.5, "ing."},
+        rest: 0.5
+      ],
+      # 110  with the bass: Oh, what a glo-ri-ous
+      [
+        n: {"E3", 0.75, "Oh,"},
+        n: {"D3", 0.75, "what"},
+        n: {"C3", 0.5, "a"},
+        n: {"E3", 0.75, "glo-"},
+        n: {"D3", 0.75, "ri-"},
+        n: {"C3", 0.5, "ous"}
+      ],
+      # 111  with the bass: night.
+      [n: {"C3", 2, "night."}, rest: 2],
+      # 112  with the bass: Oh, what a glo-ri-ous
+      #   ? unison drift (rit. in 112)
+      [
+        n: {"E3", 0.75, "Oh,"},
+        n: {"D3", 0.75, "what"},
+        n: {"C3", 0.5, "a"},
+        n: {"E3", 0.75, "glo-"},
+        n: {"D3", 0.75, "ri-"},
+        n: {"C3", 0.5, "ous"}
+      ],
+      # 113  with the bass: night.
+      [n: {"C3", 4, "night."}]
     ]
   end
 end

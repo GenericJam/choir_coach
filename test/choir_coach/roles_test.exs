@@ -119,10 +119,10 @@ defmodule ChoirCoach.RolesTest do
     assert Roles.mark(bass, melody).notes |> Enum.map(& &1.role) == [:part, :part]
   end
 
-  test "every song's bass is marked, and the melody itself never is" do
-    for mod <- Songs.all() do
-      parts = Songs.parts(mod)
-      assert Enum.all?(parts[:bass].song.notes, &(&1.role in [:melody, :part]))
+  test "every song's voice parts are marked, and the melody itself never is" do
+    for mod <- Songs.all(), mine <- ChoirCoach.Settings.voice_parts() do
+      parts = Songs.parts(mod, mine)
+      assert Enum.all?(parts[mine].song.notes, &(&1.role in [:melody, :part]))
       assert Enum.all?(parts[:melody].song.notes, &is_nil(&1.role))
     end
   end

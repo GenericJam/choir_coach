@@ -145,8 +145,13 @@ defmodule ChoirCoach.Mix do
   defp clamp(:level, v), do: v |> round() |> max(0) |> min(100)
   defp clamp(:balance, v), do: v |> round() |> max(-100) |> min(100)
 
-  @doc "The Mix button's caption: the preset's name, or \"Custom\"."
+  @doc """
+  The Mix button's caption: the preset's name, or "Custom". Short enough for
+  the narrowest transport control (48 dp at 11 pt): "Right ear" for
+  "Me in right ear".
+  """
   @spec caption(t()) :: String.t()
+  def caption(%{preset: :right_ear}), do: "Right ear"
   def caption(mix), do: @labels[mix.preset]
 
   @doc """
