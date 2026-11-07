@@ -17,6 +17,22 @@ config :mob_dev,
   elixir_lib:
     System.get_env("MOB_ELIXIR_LIB", :code.lib_dir(:elixir) |> to_string() |> Path.dirname()),
 
+  # App identity. Android keeps the id the shared APK was built with (an
+  # installed APK only updates in place under the same id). Apple forbids
+  # "_" in a bundle id and com.example.* isn't ours, so iOS (TestFlight)
+  # uses its own.
+  bundle_id: "com.example.choir_coach",
+  ios_bundle_id: "com.genericjam.choircoach",
+  ios_team_id: "Q89CW299G8",
+
+  # App Store Connect API key for `mix mob.publish --ios` (TestFlight
+  # upload), the same team key as the other genericjam apps.
+  app_store_connect: [
+    key_id: "9GQ2L259B6",
+    issuer_id: "38bd5c33-223a-44fb-9a94-5237205e3cd3",
+    key_path: "~/.appstoreconnect/AuthKey_9GQ2L259B6.p8"
+  ],
+
   # iOS devices and orientations, stamped into the built app's Info.plist
   # (they override ios/Info.plist). ios_target_devices: [:iphone, :ipad] runs
   # full-screen on iPad, resizes and joins Split View; [:iphone] runs iPad in

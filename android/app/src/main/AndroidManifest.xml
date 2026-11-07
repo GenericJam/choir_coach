@@ -72,7 +72,7 @@
     </queries>
 
     <application
-        android:label="ChoirCoach"
+        android:label="Choir Coach"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:extractNativeLibs="true"

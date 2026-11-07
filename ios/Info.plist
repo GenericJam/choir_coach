@@ -3,10 +3,17 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- The build stamps the id from mob.exs `ios_bundle_id`. -->
     <key>CFBundleIdentifier</key>
-    <string>com.example.choir_coach</string>
+    <string>com.genericjam.choircoach</string>
     <key>CFBundleName</key>
     <string>ChoirCoach</string>
+    <key>CFBundleDisplayName</key>
+    <string>Choir Coach</string>
+    <!-- No encryption beyond Apple's own (HTTPS isn't used either), so
+         TestFlight doesn't ask the export-compliance question per build. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>CFBundleExecutable</key>
     <string>ChoirCoach</string>
     <key>CFBundleVersion</key>

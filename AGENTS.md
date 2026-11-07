@@ -322,7 +322,18 @@ screen round trip and leaving a song behave as on Android. Coordinate taps
 don't reach a physical iPhone (`Mob.Test.tap_xy` has no effect there), so
 drive it with `Mob.Test.tap/2` by tag.
 
-## Sharing the app (Android)
+## Sharing the app
+
+Members get both apps from https://choir.genericjam.com/apps (behind the
+choir password; the page is in choir_web): the APK for Android, the
+TestFlight public link for iPhone and iPad.
+
+### Android
+
+Bump `versionCode` (and `versionName`) in `android/app/build.gradle` for
+every APK you hand out, so it installs over the previous one. Copy the
+result to `~/Downloads/ChoirCoach.apk`: choir_web serves that file
+(`CHOIR_APK_PATH`).
 
 Choir members install a signed APK (no Play Store: the recordings make it
 too big for a base bundle). `mix mob.release --android` builds and signs the
@@ -345,6 +356,35 @@ ports 4369 (0x1111) or 9100 (0x238C). A release build can't be driven by
 The app unpacks its bundle on first launch, so it needs about twice the
 APK's size free. A release APK and a dev install can't sit side by side
 (different signatures): uninstall one first.
+
+### iOS (TestFlight)
+
+iOS has its own bundle id, `com.genericjam.choircoach` (`ios_bundle_id` in
+mob.exs; Apple forbids the `_` in Android's `com.example.choir_coach`).
+App Store Connect app "Choir Coach", id 6832004835, team Q89CW299G8.
+
+1. Bump `CFBundleVersion` in `ios/Info.plist` (Apple refuses a build number
+   it has seen; `mix mob.republish --ios` bumps and uploads in one go).
+2. `mise exec -- mix mob.release --ios` → `_build/mob_release/ChoirCoach.ipa`,
+   signed with the Apple Distribution certificate and the "Choir Coach App
+   Store" profile (created through the API; it expires 2027-05-02 with the
+   certificate). Release builds start no Erlang distribution. It needs
+   `priv/generated/driver_tab_ios.c` (`mix mob.regen_driver_tab --format c`
+   after adding or removing a NIF).
+3. `mise exec -- mix mob.publish --ios` uploads with the App Store Connect
+   API key in mob.exs. Apple processes the build for 5–15 minutes.
+4. TestFlight groups: "GenericJam" (internal, every build, no review) and
+   "Choir" (external, public link https://testflight.apple.com/join/zNrehSSP).
+   Add each new build to "Choir" and submit it for beta review; Apple
+   reviews the first build of a version (about a day), later builds of the
+   same version usually pass automatically. The beta review contact,
+   description and privacy policy URL (https://choir.genericjam.com/privacy)
+   are set on the app.
+
+The App Store Connect API answers 403 "requires an in-effect agreement"
+whenever Apple has a new developer agreement waiting: only Kevin can accept
+it (developer.apple.com/account). The API can't create an app record
+either; that's the App Store Connect website.
 
 ## Working on it
 
