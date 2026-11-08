@@ -50,6 +50,10 @@ defmodule ChoirCoach.PracticeScreen do
   @hold_idle_ms 150
   @hold_awake_ms 20_000
   @hold_median 5
+  # The octave shown ("1 octave low") is the most common one among the last
+  # @octave_window voiced readings (10 ms apart), so the detector's own
+  # octave jumps don't make it flicker.
+  @octave_window 20
   # A drag on the progress track with no event this long has lost its end
   # (or the finger is resting); a lift within @scrub_rest_dp of where it was
   # then ended is the resting finger's (Mob's throttle can drop the last few
@@ -158,6 +162,10 @@ defmodule ChoirCoach.PracticeScreen do
         hold_recent: [],
         hold_heard_at: nil,
         hold_awake: false,
+        # The octave the voice is in against the written note (-1, 0, 1, …;
+        # nil while nothing is heard) and the recent readings' octaves.
+        octave: nil,
+        octave_recent: [],
         # In the background a held note isn't listened to.
         background: false
       )
@@ -1764,7 +1772,14 @@ defmodule ChoirCoach.PracticeScreen do
     end
   end
 
-  defp reset_trace(socket), do: Mob.Socket.assign(socket, trace: [], feedback: Feedback.new())
+  defp reset_trace(socket),
+    do:
+      Mob.Socket.assign(socket,
+        trace: [],
+        feedback: Feedback.new(),
+        octave: nil,
+        octave_recent: []
+      )
 
   defp apply_mix(socket) do
     a = socket.assigns
@@ -1843,14 +1858,18 @@ defmodule ChoirCoach.PracticeScreen do
 
     dt = max(t - a.t_ms, 0.0)
 
-    Mob.Socket.assign(socket,
+    cents = current_cents(a.song, trace, t)
+
+    socket
+    |> Mob.Socket.assign(
       audio: audio,
       t_ms: t,
       trace: trace,
-      feedback: smooth(a.feedback, current_cents(a.song, trace, t), t),
+      feedback: smooth(a.feedback, cents, t),
       center_midi: recentre(a.center_midi, a.song, t, dt),
       frames: a.frames + 1
     )
+    |> track_octave(cents != nil, octaves(a.song, readings))
   end
 
   @doc false
@@ -1879,10 +1898,43 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   # An octave slip moved to the copy of `midi` nearest the written note.
-  defp fold_octave(midi, written) when abs(midi - written) >= 9.5,
-    do: midi - 12 * round((midi - written) / 12)
+  defp fold_octave(midi, written), do: midi - 12 * octave_of(midi, written)
 
-  defp fold_octave(midi, _written), do: midi
+  # Whole octaves from the written note: 0 within 9½ semitones (a wrong
+  # note, not another octave), else the nearest octave.
+  defp octave_of(midi, written) when abs(midi - written) >= 9.5,
+    do: round((midi - written) / 12)
+
+  defp octave_of(_midi, _written), do: 0
+
+  # The octave of each confident reading near a written note.
+  defp octaves(song, readings) do
+    for {ts, midi, conf} <- readings,
+        is_number(midi) and conf >= 0.2,
+        %{midi: written} <- [Song.note_near(song, ts, @note_margin_ms)],
+        do: octave_of(midi, written)
+  end
+
+  # While a voice is heard on a note, the octave most of the recent
+  # readings are in (on a tie, the one shown already, else the written
+  # one); nothing in silence.
+  defp track_octave(socket, false, _ks),
+    do: Mob.Socket.assign(socket, octave: nil, octave_recent: [])
+
+  defp track_octave(socket, true, ks) do
+    a = socket.assigns
+    recent = Enum.take(a.octave_recent ++ ks, -@octave_window)
+    Mob.Socket.assign(socket, octave: most_common(recent, a.octave), octave_recent: recent)
+  end
+
+  defp most_common([], _shown), do: nil
+
+  defp most_common(ks, shown) do
+    counts = Enum.frequencies(ks)
+    top = counts |> Map.values() |> Enum.max()
+    tied = for {k, ^top} <- counts, do: k
+    if shown in tied, do: shown, else: Enum.min_by(tied, &abs/1)
+  end
 
   @doc false
   # Error of the latest confident reading (from the last 150 ms, so
@@ -1978,7 +2030,8 @@ defmodule ChoirCoach.PracticeScreen do
     real = a.hold_t0 + System.monotonic_time(:millisecond) - a.hold_mono0
     now = max(a.hold_clock + interval, real)
     note = Song.note_at(a.song, a.t_ms)
-    {voice, recent, heard_at} = held_voice(a, voiced(readings, note), now)
+    heard = voiced(readings, note)
+    {voice, recent, heard_at} = held_voice(a, heard, now)
 
     cents =
       case {note, voice} do
@@ -1998,6 +2051,7 @@ defmodule ChoirCoach.PracticeScreen do
       center_midi: recentre(a.center_midi, a.song, a.t_ms, now - a.hold_clock)
     )
     |> hold_awake(heard_at != nil and now - heard_at < @hold_awake_ms)
+    |> track_octave(cents != nil, Enum.map(heard, &elem(&1, 2)))
   end
 
   # Confident readings, octave slips folded onto the note. With no note under
@@ -2005,9 +2059,10 @@ defmodule ChoirCoach.PracticeScreen do
   # singer in the room isn't the part, and mustn't keep the screen awake.
   defp voiced(_readings, nil), do: []
 
+  # {folded midi, confidence, octave}.
   defp voiced(readings, note) do
     for {_ts, midi, conf} <- readings, is_number(midi) and conf >= 0.2 do
-      {fold_octave(midi, note.midi), conf}
+      {fold_octave(midi, note.midi), conf, octave_of(midi, note.midi)}
     end
   end
 
@@ -2042,8 +2097,11 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   # What a frame draws "now" with: while holding, the voice heard and the
-  # hold's clock (the glow keeps breathing although the song time stands).
+  # hold's clock (the glow keeps breathing although the song time stands);
+  # and the octave being sung.
   defp hold_frame(a, frame) do
+    frame = Map.put(frame, :octave, a.octave)
+
     if holding?(a),
       do: Map.merge(frame, %{now_ms: a.hold_clock, voice: a.hold_voice}),
       else: Map.put(frame, :now_ms, round(a.t_ms))

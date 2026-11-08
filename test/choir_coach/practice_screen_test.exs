@@ -142,6 +142,33 @@ defmodule ChoirCoach.PracticeScreenTest do
       assert assigns(on).feedback.status == :on_pitch
     end
 
+    test "it says which octave the voice is in, steady through the detector's odd octave slip" do
+      {view, note} = paused_on_note()
+
+      low = held(view, [heard(note.midi - 12.1)], 20)
+      assert assigns(low).octave == -1
+      # Drawn on the written note all the same: on pitch.
+      assert assigns(low).feedback.status == :on_pitch
+
+      assert assigns(held(low, [heard(note.midi + 0.1)], 30)).octave == 0
+      assert assigns(held(low, [heard(note.midi + 11.9)], 30)).octave == 1
+
+      # Mostly the octave below, one reading in three slipping up: still below.
+      slipping = held(view, [heard(note.midi - 12), heard(note.midi - 12), heard(note.midi)], 15)
+      assert assigns(slipping).octave == -1
+
+      # Silence: no octave claimed.
+      quiet = held(low, [silent()], 30)
+      assert assigns(quiet).octave == nil
+    end
+
+    test "a wrong note near the written one is a wrong note, not another octave" do
+      {view, note} = paused_on_note()
+      a = view |> held([heard(note.midi - 5)], 20) |> assigns()
+      assert a.octave == 0
+      assert match?({:low, :far}, a.feedback.status)
+    end
+
     test "scrubbed to a far note while paused, the roll comes round to it" do
       view = ready_view()
       song = assigns(view).song
@@ -324,6 +351,8 @@ defmodule ChoirCoach.PracticeScreenTest do
     assert_in_delta socket.assigns.t_ms, from + 1_200, 0.001
     assert Enum.count_until(socket.assigns.trace, 51) > 50
     assert socket.assigns.feedback.status != :breathe
+    # The host's singer sings the part as written.
+    assert socket.assigns.octave == 0
   end
 
   test "at the end it loops back to the start, or stops when loop is off" do

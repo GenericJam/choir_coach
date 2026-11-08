@@ -80,10 +80,16 @@ its tokens live in `ChoirCoach.Style`.
   headphones icon; `ChoirCoach.MixView` the mix sheet's swatches and ear map.
 - `ChoirCoach.Feedback` — smooths raw cents into colour, glow and status
   wording, following the handoff's motion rules.
-- `ChoirCoach.Roles` — marks each phrase of a non-melody part (a run of
-  notes without a rest of a beat or more) as `:melody` when at least 75% of
-  its sounding time matches the melody's pitch class (an octave down
-  counts), else `:part`. `Songs.parts/2` applies it; the practice screen
+- `ChoirCoach.Roles` — marks each stretch of a non-melody part `:melody` or
+  `:part`. Per note first: a note follows the tune when the melody sounds its
+  pitch class (any octave) for at least half its length. Within a phrase (a
+  run of notes without a rest of a beat or more) the label changes only for
+  a stretch of at least 2 beats and 2 notes; shorter ones (a shared chord
+  tone, a held note under a moving tune) take their neighbours' label, and a
+  phrase with no stretch that long goes by the majority of its time. (A
+  label per whole phrase at 75% mislabelled 520 notes across the 16 parts:
+  parts often switch between the tune and a harmony mid-phrase; now 166,
+  all deliberate folds.) `Songs.parts/2` applies it; the practice screen
   tags the phrase being sung, or the next one, "Melody" (sing with
   everyone) or "Part" (your own line). It depends on the melody
   transcription, so fix a wrong tag there, not here.
@@ -133,7 +139,13 @@ its tokens live in `ChoirCoach.Style`.
   canned devices.
 - `ChoirCoach.PracticeScreen` — ~30 fps frame tick on the engine's position;
   readings are octave-folded and gated to the written notes before they feed
-  the trace and feedback. Header: title and headphones icon (→ Audio), then
+  the trace and feedback (singing the note in another octave counts as on
+  it). The octave the voice was really in is kept (`octave`: −1, 0, +1…,
+  the most common over the last 20 readings, nil in silence) and shown
+  under the note name (beside it in the one-line status, when it fits)
+  while a voice is heard: "1 octave low", "Written octave", "1 octave
+  high"; a reading within 9½ semitones of the note is a wrong note, not
+  another octave. Header: title and headphones icon (→ Audio), then
   the facts with the current bar and the <your part> | Melody switch (same song
   time, that part's mix and engine state). Transport: restart, −1 bar,
   play, +1 bar, loop, Mix (opens "What you hear"; its caption is the

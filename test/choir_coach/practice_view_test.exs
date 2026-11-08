@@ -65,8 +65,8 @@ defmodule ChoirCoach.PracticeViewTest do
     assert first_sharp(treble).y - top == first_sharp(bass).y - f_line
   end
 
-  defp texts_at(song, t, feedback \\ Feedback.new()) do
-    PracticeView.ops(%{
+  defp texts_at(song, t, feedback \\ Feedback.new(), extra \\ %{}) do
+    %{
       song: song,
       t_ms: t,
       width: 400.0,
@@ -76,7 +76,9 @@ defmodule ChoirCoach.PracticeViewTest do
       trace: [],
       feedback: feedback,
       now_ms: round(t)
-    })
+    }
+    |> Map.merge(extra)
+    |> PracticeView.ops()
     |> List.flatten()
     |> Enum.flat_map(fn
       %{op: :text, text: s} -> [s]
@@ -113,6 +115,73 @@ defmodule ChoirCoach.PracticeViewTest do
     gone = Feedback.update(heard, nil, 600)
     assert gone.status == :on_pitch
     assert "Sing" in texts_at(song, 600.0, gone)
+  end
+
+  test "the octave sung shows under the note name while a voice is heard, and only then" do
+    song =
+      Song.build(
+        title: "Test",
+        clef: :bass,
+        tempo_bpm: 60,
+        beats_per_bar: 4,
+        first_bar: 1,
+        bars: [[n: {"C3", 4, "Glo-"}]]
+      )
+
+    heard = Feedback.update(Feedback.new(), 0.0, 500)
+
+    assert "1 octave low" in texts_at(song, 500.0, heard, %{octave: -1})
+    assert "Written octave" in texts_at(song, 500.0, heard, %{octave: 0})
+    assert "1 octave high" in texts_at(song, 500.0, heard, %{octave: 1})
+    assert "2 octaves low" in texts_at(song, 500.0, heard, %{octave: -2})
+
+    # Silence: the pill says Sing and no octave is claimed.
+    silent = texts_at(song, 600.0, Feedback.update(heard, nil, 600), %{octave: -1})
+    refute Enum.any?(silent, &String.contains?(&1, "octave"))
+
+    # The one-line status (compact canvas) has it too when there's room.
+    compact = texts_at(song, 500.0, heard, %{octave: -1, status_band: true})
+    assert "1 octave low" in compact
+  end
+
+  test "the octave label is drawn whole, left of the playhead, on narrow phones" do
+    song =
+      Song.build(
+        title: "Test",
+        clef: :bass,
+        key: 2,
+        tempo_bpm: 60,
+        beats_per_bar: 4,
+        first_bar: 1,
+        bars: [[n: {"F#3", 4, "Glo-"}]]
+      )
+
+    heard = Feedback.update(Feedback.new(), 0.0, 500)
+
+    for width <- [360.0, 390.0, 411.0], k <- [-1, 0, 1] do
+      frame = %{
+        song: song,
+        t_ms: 500.0,
+        width: width,
+        height: 800.0,
+        semitone: 40.0,
+        center_midi: 50.0,
+        trace: [],
+        feedback: heard,
+        now_ms: 500,
+        octave: k
+      }
+
+      playhead = PracticeView.geometry(frame).playhead_x
+      label = PracticeView.octave_label(k)
+
+      drawn = for %{op: :text, text: ^label} = op <- List.flatten(PracticeView.ops(frame)), do: op
+      assert [%{x: x, size: size}] = drawn, "#{label} missing at #{width} pt"
+
+      # The view's own width estimate (0.56 em a character).
+      assert x + String.length(label) * size * 0.56 <= playhead,
+             "#{label} at #{width} pt runs past the playhead"
+    end
   end
 
   # Staff lyrics (by their size) drawn at the song's start on a canvas

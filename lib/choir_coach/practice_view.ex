@@ -37,6 +37,10 @@ defmodule ChoirCoach.PracticeView do
           required(:trace) => [sample()],
           required(:feedback) => Feedback.t(),
           required(:now_ms) => integer(),
+          # Whole octaves the voice is from the written note (0: the written
+          # octave; nil while nothing is heard). The voice is drawn folded
+          # onto the note; this says which octave it was really in.
+          optional(:octave) => integer() | nil,
           # Paused on a note and listening: the voice heard now
           # ({midi, confidence}, nil while silent), drawn at the playhead in
           # place of the trace's latest reading.
@@ -49,6 +53,9 @@ defmodule ChoirCoach.PracticeView do
   # it would run into its neighbour on the first.
   @staff_lyric_rows [72.0, 96.0]
   @strip_height 122.0
+  # The smallest the octave label ("1 octave low") is shrunk to before it's
+  # left out.
+  @min_octave_size 11
   # The staff strip and one status line (`compact_ops/1`, `status_band`).
   @compact_height 166.0
   # Height shading (see `shade/1`): white over the background, strongest at
@@ -1041,29 +1048,64 @@ defmodule ChoirCoach.PracticeView do
     # the note stays up with a neutral "Sing".
     case Song.note_at(frame.song, frame.t_ms) do
       nil -> breathe_cluster(frame, x, pill_y, lyric_y, max_w)
-      note -> singing_cluster(frame.feedback, note, frame.song.part, x, pill_y, lyric_y, max_w)
+      note -> singing_cluster(frame, note, x, pill_y, lyric_y, max_w)
     end
   end
 
-  defp singing_cluster(feedback, note, part, x, pill_y, lyric_y, max_w) do
-    {label, icon, color} = note_status(feedback)
+  defp singing_cluster(frame, note, x, pill_y, lyric_y, max_w) do
+    {label, icon, color} = note_status(frame.feedback)
     size = fit_size(display_lyric(note.lyric), Style.type(:active_lyric), max_w)
+    name = Pitch.display(note.name)
+    name_y = lyric_y + size + 4
+    name_size = Style.type(:expected_note)
 
     [
       status_pill(x, pill_y, label, icon, color),
-      role_tag(x + pill_width(label) + 8, pill_y + 4, note.role, part),
+      role_tag(x + pill_width(label) + 8, pill_y + 4, note.role, frame.song.part),
       text(x, lyric_y, display_lyric(note.lyric),
         color: Style.text_primary(),
         size: size,
         weight: :bold
       ),
-      text(x, lyric_y + size + 4, Pitch.display(note.name),
-        color: Style.text_secondary(),
-        size: Style.type(:expected_note),
-        weight: :bold
-      )
+      text(x, name_y, name, color: Style.text_secondary(), size: name_size, weight: :bold),
+      # Its own line under the note name: beside it there's too little room
+      # before the playhead on a phone.
+      octave_text(heard_octave(frame), x, name_y + name_size + 6, x + max_w)
     ]
   end
+
+  # The octave being sung, while a voice is heard on a note.
+  defp heard_octave(%{octave: k, feedback: %Feedback{cents: c}})
+       when is_integer(k) and is_number(c),
+       do: k
+
+  defp heard_octave(_frame), do: nil
+
+  defp octave_text(nil, _x, _y, _max_x), do: []
+
+  # Kept left of `max_x` (the playhead): a size or two smaller when it must,
+  # and left out when even that won't fit.
+  defp octave_text(k, x, y, max_x) do
+    label = octave_label(k)
+    size = Style.type(:subtitle)
+    room = max_x - x
+    w = text_width(label, size)
+    fitted = if w <= room, do: size, else: floor(size * room / w)
+    color = if k == 0, do: Style.text_tertiary(), else: Style.text_secondary()
+
+    if fitted >= @min_octave_size,
+      do: text(x, y + (size - fitted), label, color: color, size: fitted, weight: :bold),
+      else: []
+  end
+
+  @doc """
+  Which octave the singer is in against the written note: "Written octave",
+  "1 octave low", "2 octaves high"…
+  """
+  @spec octave_label(integer()) :: String.t()
+  def octave_label(0), do: "Written octave"
+  def octave_label(k) when abs(k) == 1, do: "1 octave #{if k < 0, do: "low", else: "high"}"
+  def octave_label(k), do: "#{abs(k)} octaves #{if k < 0, do: "low", else: "high"}"
 
   defp breathe_cluster(frame, x, pill_y, lyric_y, max_w) do
     pill = [
@@ -1132,7 +1174,14 @@ defmodule ChoirCoach.PracticeView do
 
     List.flatten([
       status_pill(x, y, label, icon, color),
-      status_note(prefix, note, lyric_x, y, tag_x - 8),
+      status_note(
+        prefix,
+        note,
+        lyric_x,
+        y,
+        tag_x - 8,
+        if(prefix, do: nil, else: heard_octave(frame))
+      ),
       role_tag(tag_x, y + 4, role, frame.song.part)
     ])
   end
@@ -1171,12 +1220,13 @@ defmodule ChoirCoach.PracticeView do
   def role_label(:melody), do: "Melody"
   def role_label(:part), do: "Part"
 
-  defp status_note(_prefix, nil, _x, _y, _max_x), do: []
+  defp status_note(_prefix, nil, _x, _y, _max_x, _octave), do: []
 
   # Lyric then note name, kept left of `max_x` (the role tag): the lyric
   # shrinks to 14 pt; past that the note name is dropped and the lyric
-  # alone is fitted, so nothing runs into the tag on narrow phones.
-  defp status_note(prefix, note, x, y, max_x) do
+  # alone is fitted, so nothing runs into the tag on narrow phones. The
+  # octave being sung follows the name where there's room for it.
+  defp status_note(prefix, note, x, y, max_x, octave) do
     lyric = display_lyric(note.lyric)
     name = Pitch.display(note.name)
     lead = if prefix, do: 40, else: 0
@@ -1187,6 +1237,7 @@ defmodule ChoirCoach.PracticeView do
       if with_name >= 14, do: {with_name, name}, else: {fit_compact(lyric, room), nil}
 
     name_x = x + lead + text_width(lyric, lyric_size) + 12
+    octave_x = name_x + if(name, do: text_width(name, 20) + 10, else: 0)
 
     [
       if(prefix,
@@ -1202,7 +1253,8 @@ defmodule ChoirCoach.PracticeView do
       if(name,
         do: text(name_x, y + 5, name, color: Style.text_secondary(), size: 20, weight: :bold),
         else: []
-      )
+      ),
+      octave_text(octave, octave_x, y + 9, max_x)
     ]
   end
 

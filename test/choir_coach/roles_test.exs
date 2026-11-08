@@ -50,18 +50,30 @@ defmodule ChoirCoach.RolesTest do
            ]
   end
 
-  test "a held note while the tune moves is not the melody" do
+  test "one held note on the tune inside a harmony phrase keeps the phrase's label" do
     bass =
       song(:bass, [
-        [n: {"C3", 4, "a"}],
+        # bar 1: a harmony line against C D E F; bar 2 holds G under G G G G
+        [n: {"A2", 1, "a"}, n: {"B2", 1, "b"}, n: {"A2", 1, "c"}, n: {"B2", 1, "d"}],
         [n: {"G3", 4, "e"}],
         [rest: 4],
         [rest: 4]
       ])
 
-    # bar 1 holds C under C D E F (a quarter matches); bar 2 holds G under G (all match):
-    # one phrase, 5/8 of its time on the tune, under the 75% bar.
-    assert roles(bass) == [{1, :part}, {2, :part}]
+    assert Enum.uniq(roles(bass)) == [{1, :part}, {2, :part}]
+  end
+
+  test "a phrase that leaves the tune for a harmony is Melody, then Part" do
+    bass =
+      song(:bass, [
+        # bar 1: the tune an octave down; bar 2, same phrase: B under G G G G
+        [n: {"C3", 1, "a"}, n: {"D3", 1, "b"}, n: {"E3", 1, "c"}, n: {"F3", 1, "d"}],
+        [n: {"B2", 1, "e"}, n: {"B2", 1, "f"}, n: {"B2", 1, "g"}, n: {"B2", 1, "h"}],
+        [rest: 4],
+        [rest: 4]
+      ])
+
+    assert Enum.uniq(roles(bass)) == [{1, :melody}, {2, :part}]
   end
 
   test "the screen asks for the phrase being sung, else the next one" do
@@ -112,11 +124,17 @@ defmodule ChoirCoach.RolesTest do
       )
     end
 
-    # One slow beat off the tune (1000 ms), then three fast beats on it (1500 ms): 60%.
-    melody = build.(:melody, [[rest: 3, n: {"E4", 1, "a"}], [n: {"C4", 3, "b"}, rest: 1]])
-    bass = build.(:bass, [[rest: 3, n: {"G2", 1, "a"}], [n: {"C3", 3, "b"}, rest: 1]])
+    # A short phrase: one slow beat off the tune (1000 ms), then a beat and a
+    # half on it at double speed (750 ms). More beats on the tune, less time.
+    melody = build.(:melody, [[rest: 3, n: {"E4", 1, "a"}], [n: {"C4", 1.5, "b"}, rest: 2.5]])
+    bass = build.(:bass, [[rest: 3, n: {"G2", 1, "a"}], [n: {"C3", 1.5, "b"}, rest: 2.5]])
 
     assert Roles.mark(bass, melody).notes |> Enum.map(& &1.role) == [:part, :part]
+
+    # The other way round (1000 ms off, 1500 ms on): Melody.
+    melody = build.(:melody, [[rest: 3, n: {"E4", 1, "a"}], [n: {"C4", 3, "b"}, rest: 1]])
+    bass = build.(:bass, [[rest: 3, n: {"G2", 1, "a"}], [n: {"C3", 3, "b"}, rest: 1]])
+    assert Roles.mark(bass, melody).notes |> Enum.map(& &1.role) == [:melody, :melody]
   end
 
   test "every song's voice parts are marked, and the melody itself never is" do
