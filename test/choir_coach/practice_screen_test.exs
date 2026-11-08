@@ -82,10 +82,10 @@ defmodule ChoirCoach.PracticeScreenTest do
     timer = assigns(playing).tick_timer
     assert is_integer(Process.read_timer(timer))
 
-    # Whatever was pending is cancelled: one frame loop, never two.
+    # Playing on from elsewhere keeps the one frame loop running.
     restarted = render_info(playing, {:tap, :restart})
-    assert Process.read_timer(timer) == false
-    assert is_integer(Process.read_timer(assigns(restarted).tick_timer))
+    assert assigns(restarted).tick_timer == timer
+    assert is_integer(Process.read_timer(timer))
 
     # Paused with the mic on, the hold's loop replaces playback's.
     paused = render_info(restarted, {:tap, :play_pause})

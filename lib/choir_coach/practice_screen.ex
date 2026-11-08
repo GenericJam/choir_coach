@@ -1715,13 +1715,14 @@ defmodule ChoirCoach.PracticeScreen do
         keep_awake(true)
 
         # The stream now reports the device it really plays through. A
-        # held note's slow frame loop gives way to playback's.
+        # held note's slow frame loop gives way to playback's; playing on
+        # (±bar, restart, a seek) keeps the frame loop as it was.
         socket
+        |> then(&if(a.playing, do: &1, else: cancel_tick(&1)))
         |> Mob.Socket.assign(audio: audio, playing: true, t_ms: start, hold_awake: false)
         |> refresh_output()
         |> apply_mix()
         |> reset_trace()
-        |> cancel_tick()
         |> schedule_tick()
 
       # The `:not_owner` message that came with it detaches this screen.
