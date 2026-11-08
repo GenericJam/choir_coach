@@ -36,7 +36,11 @@ defmodule ChoirCoach.PracticeView do
           required(:center_midi) => float(),
           required(:trace) => [sample()],
           required(:feedback) => Feedback.t(),
-          required(:now_ms) => integer()
+          required(:now_ms) => integer(),
+          # Paused on a note and listening: the voice heard now
+          # ({midi, confidence}, nil while silent), drawn at the playhead in
+          # place of the trace's latest reading.
+          optional(:voice) => {float(), float()} | nil
         }
 
   # Staff strip geometry inside the canvas (dp).
@@ -437,7 +441,7 @@ defmodule ChoirCoach.PracticeView do
   defp voice(frame, g) do
     trace = trace(frame, g)
 
-    case {frame.feedback.cents, latest(frame.trace), Song.note_at(frame.song, frame.t_ms)} do
+    case {frame.feedback.cents, current_voice(frame), Song.note_at(frame.song, frame.t_ms)} do
       {cents, {_t, midi, conf}, %{} = note}
       when is_number(cents) and is_number(midi) and conf >= 0.2 ->
         color = Style.cents_color(frame.feedback.color_cents)
@@ -463,6 +467,10 @@ defmodule ChoirCoach.PracticeView do
         trace
     end
   end
+
+  defp current_voice(%{voice: {midi, conf}, t_ms: t}), do: {t, midi, conf}
+  defp current_voice(%{voice: nil}), do: nil
+  defp current_voice(frame), do: latest(frame.trace)
 
   # Radial gradient (0 % α → 55 % α·0.4 → 100 % 0) as five stacked discs.
   @glow_layers [{1.0, 0.10}, {0.80, 0.13}, {0.62, 0.17}, {0.45, 0.25}, {0.30, 0.35}]

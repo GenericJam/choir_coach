@@ -141,8 +141,27 @@ its tokens live in `ChoirCoach.Style`.
   Dragging the progress track (`on_drag`, `{:drag, :scrub, …}`) pauses,
   moves the playhead with the finger, and plays on from the release point
   if it was playing; on Android a tap alone doesn't seek (a drag starts past
-  touch slop). **Every `on_tap` on a screen that re-renders on a timer (the
-  practice screen while playing, the Audio screen's meter) also declares
+  touch slop). **Paused with the microphone on, it keeps listening**
+  ("Holding a note" in the module): the singer can stop on a note (or
+  scrub to one) and slide onto it. Paused readings carry no song time, so
+  each frame takes the median of the last few readings against the note
+  under the playhead and drives the head, chevrons and status as playing
+  does; the trace stays as it was, and the roll eases onto the note. The
+  frame loop runs at full rate for 2 s after a voice, else every 150 ms,
+  and keeps the screen awake for 20 s after one; it stops in the
+  background and during a drag on the progress track, and in a rest it
+  idles (sound there isn't the part, so it doesn't count or keep the screen
+  awake). Ticks carry a token (`{:tick, token}`): a frame
+  already queued when play cancels the hold's timer would otherwise read
+  the engine before the new stream reports a position, and pause. Test
+  mode isn't held (nothing plays to listen to). **A drag's end can be
+  lost on Android** (MOB-511: a render landing as the finger lifts retires
+  the drag's handle before Compose picks up the new one; about 1 drag in
+  15): a drag quiet for 1 s ends where it was, and Play/Pause closes one.
+  `scripts/controls_check.exs` allows for that second. **Every `on_tap`
+  on a screen that
+  re-renders on a timer (the practice screen while playing or holding,
+  the Audio screen's meter) also declares
   `on_press_out={held()}`**: Mob's Android bridge drops a plain tap whose
   handle is from an earlier render (MOB-509), which lost most taps during
   playback; a press node's tap is matched by slot, pid and tag instead. The

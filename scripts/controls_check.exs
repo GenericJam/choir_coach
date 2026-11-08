@@ -105,7 +105,13 @@ ctx = %{serial: serial, node: node, scale: Check.scale(serial, node)}
 
 # A fresh native install resets the microphone permission, and Android's
 # prompt would sit over the controls and take the first song's taps.
-Check.adb(serial, ["shell", "pm", "grant", "com.example.choir_coach", "android.permission.RECORD_AUDIO"])
+Check.adb(serial, [
+  "shell",
+  "pm",
+  "grant",
+  "com.example.choir_coach",
+  "android.permission.RECORD_AUDIO"
+])
 
 # Back to the song list, whatever screen the app is on.
 for _ <- 1..3, Mob.Test.screen(node) != ChoirCoach.SongsScreen do
@@ -121,6 +127,7 @@ IO.puts("== Your part: #{mine}")
 picked =
   Check.step("the song list remembers the part picked", fn ->
     Check.tap(ctx, "my_part_#{mine}")
+
     Check.until(ctx, 1_500, &(&1.my_part == mine)) and
       :rpc.call(node, ChoirCoach.Settings, :my_part, []) == mine
   end)
@@ -173,12 +180,41 @@ results =
          task = Task.async(fn -> Check.drag(ctx, "progress", 0.2, 0.6, 1_500) end)
          mid = Check.until(ctx, 1_800, &(&1.scrub != nil and not &1.playing))
          Task.await(task, 10_000)
-         Process.sleep(400)
+         # A drag whose end the bridge lost ends itself after a quiet second.
+         Check.until(ctx, 1_500, &(&1.playing and &1.scrub == nil))
          s = Check.a(ctx)
          frac = s.t_ms / Song.duration_ms(s.song)
 
          (mid and s.playing and frac > 0.55 and frac < 0.65) or
            {:error, "mid paused=#{mid} after playing=#{s.playing} at #{Float.round(frac, 2)}"}
+       end},
+      # Paused, the screen keeps listening (a held note) and re-renders on its
+      # own frames; a drag must still arrive whole, and leave it paused and
+      # listening. Then play again for the steps after.
+      {"paused: scrubbing moves the playhead, stays paused, keeps listening",
+       fn ->
+         Check.tap(ctx, "ctl_play")
+         paused = Check.until(ctx, 1_500, &(not &1.playing and &1.tick_timer != nil))
+         task = Task.async(fn -> Check.drag(ctx, "progress", 0.6, 0.3, 1_200) end)
+         mid = Check.until(ctx, 1_500, &(&1.scrub != nil))
+         Task.await(task, 10_000)
+         # Within a second and a half: a drag whose end the bridge lost ends
+         # itself after one quiet second.
+         held =
+           Check.until(
+             ctx,
+             1_500,
+             &(not &1.playing and &1.scrub == nil and &1.tick_timer != nil and &1.listening == :mic)
+           )
+
+         s = Check.a(ctx)
+         frac = s.t_ms / Song.duration_ms(s.song)
+         Check.tap(ctx, "ctl_play")
+         again = Check.until(ctx, 1_500, & &1.playing)
+
+         (paused and mid and held and frac > 0.25 and frac < 0.35 and again) or
+           {:error,
+            "paused=#{paused} mid=#{mid} held=#{held} at #{Float.round(frac, 2)} played again=#{again}"}
        end},
       {"loop toggles",
        fn ->

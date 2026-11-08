@@ -42,6 +42,20 @@ defmodule ChoirCoach.PracticeScreen do
   @note_margin_ms 120
   # Silence shorter than this (one unsure reading) isn't a breath.
   @dropout_ms 150
+  # Paused with the microphone on (see "Holding a note"): frames while a
+  # voice was heard this recently, then one every @hold_idle_ms; the screen
+  # stays awake while someone sang within @hold_awake_ms. The voice drawn is
+  # the median of the last @hold_median readings (10 ms apart).
+  @hold_active_ms 2_000
+  @hold_idle_ms 150
+  @hold_awake_ms 20_000
+  @hold_median 5
+  # A drag on the progress track with no event this long has lost its end
+  # (or the finger is resting); a lift within @scrub_rest_dp of where it was
+  # then ended is the resting finger's (Mob's throttle can drop the last few
+  # dp before it stopped).
+  @scrub_idle_ms 1_000
+  @scrub_rest_dp 8.0
   @header_height 96
   @controls_height 166
   # Outputs worth measuring a delay for (headphones, wired or not; the
@@ -112,8 +126,11 @@ defmodule ChoirCoach.PracticeScreen do
         mic_delay: 0,
         audio_status: :loading,
         resume_at: nil,
-        # While the progress track is dragged: whether to play on release.
+        # While the progress track is dragged: whether to play on release,
+        # the latest x and its quiet-check token; and where a quiet drag was
+        # ended (its lift there changes nothing).
         scrub: nil,
+        scrub_rest_x: nil,
         mic: :unknown,
         listening: :off,
         # What to listen to whenever a track is ready: the mic, or the track
@@ -126,7 +143,23 @@ defmodule ChoirCoach.PracticeScreen do
         center_midi: first.midi * 1.0,
         loop: true,
         frames: 0,
-        tick_timer: nil
+        # The pending frame's timer, and the token its `{:tick, token}`
+        # carries: a cancelled timer's tick may already be queued.
+        tick_timer: nil,
+        tick_token: nil,
+        # Holding a note (paused, listening): its clock and where that
+        # started (clock and monotonic ms), the voice heard ({midi,
+        # confidence} or nil), the last few readings it is the median of,
+        # when it was heard, and whether it keeps the screen awake.
+        hold_clock: 0,
+        hold_t0: 0,
+        hold_mono0: 0,
+        hold_voice: nil,
+        hold_recent: [],
+        hold_heard_at: nil,
+        hold_awake: false,
+        # In the background a held note isn't listened to.
+        background: false
       )
       |> Window.assign(Window.size(params), &layout_of/1)
       |> refresh_output()
@@ -171,17 +204,17 @@ defmodule ChoirCoach.PracticeScreen do
     ctl_h = ControlsView.size()
     gap = max(Float.floor((row_w - 5 * ctl_w - ControlsView.play_size()) / 5 * 1.0, 1), 0.0)
 
-    frame = %{
-      song: assigns.song,
-      t_ms: assigns.t_ms,
-      width: assigns.screen_w,
-      height: canvas_height(assigns, sa),
-      semitone: Style.semitone_dp(assigns.screen_h),
-      center_midi: assigns.center_midi,
-      trace: assigns.trace,
-      feedback: assigns.feedback,
-      now_ms: round(assigns.t_ms)
-    }
+    frame =
+      hold_frame(assigns, %{
+        song: assigns.song,
+        t_ms: assigns.t_ms,
+        width: assigns.screen_w,
+        height: canvas_height(assigns, sa),
+        semitone: Style.semitone_dp(assigns.screen_h),
+        center_midi: assigns.center_midi,
+        trace: assigns.trace,
+        feedback: assigns.feedback
+      })
 
     restart = {self(), :restart}
     back = {self(), :back_bar}
@@ -293,19 +326,19 @@ defmodule ChoirCoach.PracticeScreen do
     chips = chip_specs(assigns)
     m = tablet_metrics(assigns, chips)
 
-    frame = %{
-      song: assigns.song,
-      t_ms: assigns.t_ms,
-      width: assigns.screen_w,
-      time_width: time_width(assigns),
-      status_band: m.status_band,
-      height: m.canvas_h,
-      semitone: m.semitone,
-      center_midi: assigns.center_midi,
-      trace: assigns.trace,
-      feedback: assigns.feedback,
-      now_ms: round(assigns.t_ms)
-    }
+    frame =
+      hold_frame(assigns, %{
+        song: assigns.song,
+        t_ms: assigns.t_ms,
+        width: assigns.screen_w,
+        time_width: time_width(assigns),
+        status_band: m.status_band,
+        height: m.canvas_h,
+        semitone: m.semitone,
+        center_midi: assigns.center_midi,
+        trace: assigns.trace,
+        feedback: assigns.feedback
+      })
 
     ~MOB"""
     <Column background={Style.bg()} fill_height={true}>
@@ -1199,8 +1232,18 @@ defmodule ChoirCoach.PracticeScreen do
 
   # The app went to the background, where the OS may end it unannounced: a
   # tablet saves its docked mix (a phone's is saved as the sheet closes).
-  def handle_info({:mob_device, :did_enter_background}, socket),
-    do: {:noreply, persist_docked_mix(socket)}
+  # A held note stops (the music, if playing, plays on); back in front it
+  # starts again.
+  def handle_info({:mob_device, :did_enter_background}, socket) do
+    socket = socket |> persist_docked_mix() |> Mob.Socket.assign(:background, true)
+
+    if socket.assigns.playing,
+      do: {:noreply, socket},
+      else: {:noreply, socket |> cancel_tick() |> hold_awake(false)}
+  end
+
+  def handle_info({:mob_device, :will_enter_foreground}, socket),
+    do: {:noreply, socket |> Mob.Socket.assign(:background, false) |> hold()}
 
   # While the Audio screen has the engine this screen makes no engine call:
   # its device and delay choices are kept for the engine's return, and
@@ -1216,7 +1259,12 @@ defmodule ChoirCoach.PracticeScreen do
   def handle_info({:press_out, :held}, socket), do: {:noreply, socket}
 
   # While a track loads, play / pause toggles whether it starts once ready.
+  # A tap here also closes a drag on the progress track whose end never
+  # came (Mob's Android bridge loses it now and then when a render lands as
+  # the finger lifts, MOB-511): left open, it would keep a paused screen from
+  # listening.
   def handle_info({:tap, :play_pause}, socket) do
+    socket = Mob.Socket.assign(socket, :scrub, nil)
     a = socket.assigns
     if a.playing or a.resume_at, do: {:noreply, pause(socket)}, else: {:noreply, play(socket)}
   end
@@ -1252,6 +1300,20 @@ defmodule ChoirCoach.PracticeScreen do
   # the staff and roll follow it; letting go plays on from there if it was
   # playing (or about to) when the drag began. A :began always starts afresh,
   # so a drag whose end never arrived can't carry its intent into the next.
+  #
+  # Mob's Android bridge can lose the end (MOB-511): each render gives the drag a new
+  # handle, which Compose picks up a frame later, and an end sent in that
+  # gap goes nowhere. So the drag owns the screen (a held note's frames stop
+  # until it ends, as they'd widen that gap), and a drag with no event for
+  # @scrub_idle_ms is taken as ended where it was. A finger only resting
+  # there sends nothing either: playing, the music then goes on under it,
+  # and its lift, still where it rested, changes nothing (rather than
+  # rewinding to the resting point).
+  def handle_info({:drag, :scrub, %{x: x, phase: :ended}}, %{assigns: %{scrub: nil}} = socket)
+      when is_number(socket.assigns.scrub_rest_x) and
+             abs(x - socket.assigns.scrub_rest_x) < @scrub_rest_dp,
+      do: {:noreply, Mob.Socket.assign(socket, :scrub_rest_x, nil)}
+
   def handle_info({:drag, :scrub, %{x: x, phase: phase}}, socket) do
     a = socket.assigns
     t = scrub_time(a, x)
@@ -1261,19 +1323,29 @@ defmodule ChoirCoach.PracticeScreen do
         do: socket,
         else:
           socket
-          |> then(&if(a.playing or a.resume_at, do: pause(&1), else: &1))
-          |> Mob.Socket.assign(:scrub, %{resume: a.playing or a.resume_at != nil})
+          |> Mob.Socket.assign(
+            scrub: %{resume: a.playing or a.resume_at != nil},
+            scrub_rest_x: nil
+          )
+          |> then(&if(a.playing or a.resume_at, do: pause(&1), else: cancel_tick(&1)))
 
     socket = socket |> Mob.Socket.assign(:t_ms, t) |> reset_trace()
 
     if phase in [:began, :dragging] do
-      {:noreply, socket}
+      token = make_ref()
+      Process.send_after(self(), {:scrub_idle, token}, @scrub_idle_ms)
+      scrub = Map.merge(socket.assigns.scrub, %{token: token, x: x})
+      {:noreply, Mob.Socket.assign(socket, :scrub, scrub)}
     else
-      resume = socket.assigns.scrub.resume
-      socket = Mob.Socket.assign(socket, :scrub, nil)
-      {:noreply, if(resume, do: play(socket), else: socket)}
+      {:noreply, end_scrub(socket)}
     end
   end
+
+  # The drag went quiet (its end lost, or the finger resting): end it there.
+  def handle_info({:scrub_idle, token}, %{assigns: %{scrub: %{token: token, x: x}}} = socket),
+    do: {:noreply, socket |> Mob.Socket.assign(:scrub_rest_x, x) |> end_scrub()}
+
+  def handle_info({:scrub_idle, _stale}, socket), do: {:noreply, socket}
 
   def handle_info({:tap, :loop}, socket) do
     {:noreply, Mob.Socket.assign(socket, :loop, not socket.assigns.loop)}
@@ -1372,15 +1444,23 @@ defmodule ChoirCoach.PracticeScreen do
       else: {:noreply, Mob.Socket.assign(socket, :listening, :off)}
   end
 
-  def handle_info(:tick, socket) do
-    socket = Mob.Socket.assign(socket, :tick_timer, nil)
+  def handle_info({:tick, token}, %{assigns: %{tick_token: token}} = socket)
+      when is_reference(token) do
+    socket = Mob.Socket.assign(socket, tick_timer: nil, tick_token: nil)
+    a = socket.assigns
 
-    if socket.assigns.playing do
-      {:noreply, socket |> advance() |> schedule_tick()}
-    else
-      {:noreply, socket}
+    cond do
+      a.playing -> {:noreply, socket |> advance() |> schedule_tick()}
+      holding?(a) -> {:noreply, socket |> hold_step() |> schedule_tick()}
+      # A hold that ended (the microphone stopped, the track reloads).
+      true -> {:noreply, hold_awake(socket, false)}
     end
   end
+
+  # A frame from a timer cancelled after it fired: play, say, the moment a
+  # paused screen's frame was due. Running it would read the engine's
+  # position before the new stream reports one, and pause.
+  def handle_info({:tick, _stale}, socket), do: {:noreply, socket}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -1446,7 +1526,8 @@ defmodule ChoirCoach.PracticeScreen do
         playing: false,
         resume_at: nil,
         listening: :off,
-        scrub: nil
+        scrub: nil,
+        hold_awake: false
       )
 
     if Audio.Lease.await(self()) == :free and retry,
@@ -1498,14 +1579,15 @@ defmodule ChoirCoach.PracticeScreen do
   # (`:decode_error` can follow `:ready`), so stop whatever had started:
   # playback, the frame tick, keep-awake and the microphone.
   defp audio_event({:choir_audio, :load_error, reason, _load}, socket) do
-    socket = pause(socket)
     a = socket.assigns
 
-    Mob.Socket.assign(socket,
+    socket
+    |> Mob.Socket.assign(
       audio: a.engine.stop_listening(a.audio),
       listening: :off,
       audio_status: {:error, reason}
     )
+    |> pause()
   end
 
   defp audio_event({:choir_audio, :decoded, _info, _load}, socket), do: socket
@@ -1632,12 +1714,14 @@ defmodule ChoirCoach.PracticeScreen do
       {:ok, audio} ->
         keep_awake(true)
 
-        # The stream now reports the device it really plays through.
+        # The stream now reports the device it really plays through. A
+        # held note's slow frame loop gives way to playback's.
         socket
-        |> Mob.Socket.assign(audio: audio, playing: true, t_ms: start)
+        |> Mob.Socket.assign(audio: audio, playing: true, t_ms: start, hold_awake: false)
         |> refresh_output()
         |> apply_mix()
         |> reset_trace()
+        |> cancel_tick()
         |> schedule_tick()
 
       # The `:not_owner` message that came with it detaches this screen.
@@ -1650,6 +1734,7 @@ defmodule ChoirCoach.PracticeScreen do
   end
 
   # Also drops a pending start: pausing while a track loads means stay paused.
+  # Paused and listening, the screen goes on listening (`hold/1`).
   defp pause(socket) do
     a = socket.assigns
     keep_awake(false)
@@ -1657,7 +1742,14 @@ defmodule ChoirCoach.PracticeScreen do
 
     socket
     |> cancel_tick()
-    |> Mob.Socket.assign(audio: audio, playing: false, resume_at: nil)
+    |> Mob.Socket.assign(audio: audio, playing: false, resume_at: nil, hold_awake: false)
+    |> hold()
+  end
+
+  defp end_scrub(socket) do
+    resume = socket.assigns.scrub.resume
+    socket = Mob.Socket.assign(socket, :scrub, nil)
+    if resume, do: play(socket), else: hold(socket)
   end
 
   defp seek(socket, t) do
@@ -1699,7 +1791,7 @@ defmodule ChoirCoach.PracticeScreen do
 
     case a.engine.listen(a.audio, source) do
       {:ok, audio} ->
-        Mob.Socket.assign(socket, audio: audio, listening: source)
+        socket |> Mob.Socket.assign(audio: audio, listening: source) |> hold()
 
       {:error, :not_owner, audio} ->
         Mob.Socket.assign(socket, :audio, audio)
@@ -1771,22 +1863,25 @@ defmodule ChoirCoach.PracticeScreen do
   #     few semitones off) are left alone.
   def align_readings(song, readings) do
     Enum.map(readings, fn
-      {ts, midi, conf} = reading when is_number(midi) ->
+      {ts, midi, conf} when is_number(midi) ->
         case Song.note_near(song, ts, @note_margin_ms) do
           nil ->
             {ts, nil, 0.0}
 
-          %{midi: written} when abs(midi - written) >= 9.5 ->
-            {ts, midi - 12 * round((midi - written) / 12), conf}
-
-          _ ->
-            reading
+          %{midi: written} ->
+            {ts, fold_octave(midi, written), conf}
         end
 
       reading ->
         reading
     end)
   end
+
+  # An octave slip moved to the copy of `midi` nearest the written note.
+  defp fold_octave(midi, written) when abs(midi - written) >= 9.5,
+    do: midi - 12 * round((midi - written) / 12)
+
+  defp fold_octave(midi, _written), do: midi
 
   @doc false
   # Error of the latest confident reading (from the last 150 ms, so
@@ -1822,21 +1917,163 @@ defmodule ChoirCoach.PracticeScreen do
     end
   end
 
+  # ── Holding a note ───────────────────────────────────────────────────────
+  #
+  # Paused with the microphone on, the screen goes on listening, so the
+  # singer can stop on a note and slide onto it: the head, its stem and
+  # chevrons, and the status ("A little low", "On pitch") follow the voice
+  # against the note under the playhead. The engine keeps measuring while
+  # paused; its readings then carry no song time, so a frame takes the
+  # latest one heard. The frame loop slows while nobody sings, and the screen
+  # stays awake while somebody does. The trace is left as it was: time
+  # doesn't move, so there's nowhere to draw more of it. Playing, a reload,
+  # the microphone stopping or a drag on the progress track end the hold
+  # (the drag's release starts it again; a seek just measures a new note).
+
+  defp holding?(a) do
+    a.attached and not a.playing and a.resume_at == nil and a.audio_status == :ready and
+      a.listening == :mic and not a.background and a.scrub == nil
+  end
+
+  # Start holding if the screen now can and isn't already (no frame pending).
+  # Its clock carries on from the smoother's last moment (or the song time),
+  # so those moments only ever move forward.
+  defp hold(%{assigns: %{tick_timer: nil} = a} = socket) do
+    if holding?(a) do
+      start = max(round(a.t_ms), a.feedback.last_ms || 0)
+
+      socket
+      |> Mob.Socket.assign(
+        hold_clock: start,
+        hold_t0: start,
+        hold_mono0: System.monotonic_time(:millisecond),
+        hold_voice: nil,
+        hold_recent: [],
+        hold_heard_at: nil
+      )
+      |> schedule_tick()
+    else
+      socket
+    end
+  end
+
+  defp hold(socket), do: socket
+
+  # A frame is due this long after the last one.
+  defp hold_interval(%{hold_heard_at: at, hold_clock: now}) when is_integer(at),
+    do: if(now - at < @hold_active_ms, do: @frame_ms, else: @hold_idle_ms)
+
+  defp hold_interval(_a), do: @hold_idle_ms
+
+  # The voice is the median of the last few voiced readings (~50 ms): one
+  # stray reading (the detector catching a harmonic, a noise in the room)
+  # doesn't throw the head across the roll.
+  defp hold_step(socket) do
+    a = socket.assigns
+    {readings, audio} = a.engine.readings(a.audio)
+    interval = hold_interval(a)
+    # Real time since the hold began; at least a frame's interval (frames
+    # handled back to back, as in the screen tests, still move it on).
+    real = a.hold_t0 + System.monotonic_time(:millisecond) - a.hold_mono0
+    now = max(a.hold_clock + interval, real)
+    note = Song.note_at(a.song, a.t_ms)
+    {voice, recent, heard_at} = held_voice(a, voiced(readings, note), now)
+
+    cents =
+      case {note, voice} do
+        {%{midi: written}, {midi, _conf}} -> Pitch.cents(midi, written)
+        _ -> nil
+      end
+
+    socket
+    |> Mob.Socket.assign(
+      audio: audio,
+      hold_clock: now,
+      hold_voice: voice,
+      hold_recent: recent,
+      hold_heard_at: heard_at,
+      feedback: Feedback.update(a.feedback, cents, now),
+      # Scrubbed to another note while paused: the roll eases onto it.
+      center_midi: recentre(a.center_midi, a.song, a.t_ms, now - a.hold_clock)
+    )
+    |> hold_awake(heard_at != nil and now - heard_at < @hold_awake_ms)
+  end
+
+  # Confident readings, octave slips folded onto the note. With no note under
+  # the playhead (a rest, the song's end) nothing counts: a piano or another
+  # singer in the room isn't the part, and mustn't keep the screen awake.
+  defp voiced(_readings, nil), do: []
+
+  defp voiced(readings, note) do
+    for {_ts, midi, conf} <- readings, is_number(midi) and conf >= 0.2 do
+      {fold_octave(midi, note.midi), conf}
+    end
+  end
+
+  # {voice, the readings it's the median of, when last heard}.
+  defp held_voice(a, [], now) do
+    # One unsure reading isn't silence (as while playing).
+    if a.hold_heard_at != nil and now - a.hold_heard_at <= @dropout_ms,
+      do: {a.hold_voice, a.hold_recent, a.hold_heard_at},
+      else: {nil, [], a.hold_heard_at}
+  end
+
+  defp held_voice(a, heard, now) do
+    recent = Enum.take(a.hold_recent ++ heard, -@hold_median)
+    {{median(Enum.map(recent, &elem(&1, 0))), elem(List.last(recent), 1)}, recent, now}
+  end
+
+  defp median(values) do
+    sorted = Enum.sort(values)
+    n = length(sorted)
+    mid = div(n, 2)
+
+    if rem(n, 2) == 1,
+      do: Enum.at(sorted, mid),
+      else: (Enum.at(sorted, mid - 1) + Enum.at(sorted, mid)) / 2
+  end
+
+  defp hold_awake(%{assigns: %{hold_awake: on?}} = socket, on?), do: socket
+
+  defp hold_awake(socket, on?) do
+    keep_awake(on?)
+    Mob.Socket.assign(socket, :hold_awake, on?)
+  end
+
+  # What a frame draws "now" with: while holding, the voice heard and the
+  # hold's clock (the glow keeps breathing although the song time stands).
+  defp hold_frame(a, frame) do
+    if holding?(a),
+      do: Map.merge(frame, %{now_ms: a.hold_clock, voice: a.hold_voice}),
+      else: Map.put(frame, :now_ms, round(a.t_ms))
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   # At most one tick is ever pending: playing while already playing (restart)
-  # must not start a second frame loop.
-  defp schedule_tick(%{assigns: %{playing: true, tick_timer: nil}} = socket) do
-    Mob.Socket.assign(socket, :tick_timer, Process.send_after(self(), :tick, @frame_ms))
+  # must not start a second frame loop. Playing ticks every frame; holding a
+  # note too while a voice was heard lately, else more slowly.
+  defp schedule_tick(%{assigns: %{tick_timer: nil} = a} = socket) do
+    cond do
+      a.playing -> send_tick(socket, @frame_ms)
+      holding?(a) -> send_tick(socket, hold_interval(a))
+      true -> socket
+    end
   end
 
   defp schedule_tick(socket), do: socket
+
+  defp send_tick(socket, ms) do
+    token = make_ref()
+    timer = Process.send_after(self(), {:tick, token}, ms)
+    Mob.Socket.assign(socket, tick_timer: timer, tick_token: token)
+  end
 
   defp cancel_tick(%{assigns: %{tick_timer: nil}} = socket), do: socket
 
   defp cancel_tick(socket) do
     Process.cancel_timer(socket.assigns.tick_timer)
-    Mob.Socket.assign(socket, :tick_timer, nil)
+    Mob.Socket.assign(socket, tick_timer: nil, tick_token: nil)
   end
 
   defp loop_start(_assigns), do: 0.0

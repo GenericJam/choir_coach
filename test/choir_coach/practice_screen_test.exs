@@ -77,16 +77,242 @@ defmodule ChoirCoach.PracticeScreenTest do
     end
   end
 
-  test "restart while playing keeps a single frame loop" do
+  test "restart and pause keep a single frame loop" do
     playing = render_info(ready_view(), {:tap, :play_pause})
     timer = assigns(playing).tick_timer
-    assert is_reference(timer)
+    assert is_integer(Process.read_timer(timer))
 
+    # Whatever was pending is cancelled: one frame loop, never two.
     restarted = render_info(playing, {:tap, :restart})
-    assert assigns(restarted).tick_timer == timer
+    assert Process.read_timer(timer) == false
+    assert is_integer(Process.read_timer(assigns(restarted).tick_timer))
 
+    # Paused with the mic on, the hold's loop replaces playback's.
     paused = render_info(restarted, {:tap, :play_pause})
-    assert assigns(paused).tick_timer == nil
+    assert Process.read_timer(assigns(restarted).tick_timer) == false
+    assert is_integer(Process.read_timer(assigns(paused).tick_timer))
+  end
+
+  test "a frame queued just before play doesn't run: playback goes on" do
+    {view, _note} = paused_on_note()
+    # The hold's frame was due as the singer let go: its timer fired, then
+    # play cancelled it, but the message is already in the mailbox.
+    stale = {:tick, assigns(view).tick_token}
+    playing = render_info(view, {:tap, :play_pause})
+    after_stale = render_info(playing, stale)
+
+    a = assigns(after_stale)
+    assert a.playing
+    assert {a.tick_timer, a.frames} == {assigns(playing).tick_timer, assigns(playing).frames}
+  end
+
+  describe "paused on a note with the microphone on" do
+    # Paused mid-note (the fake engine plays nothing then; the test scripts
+    # what the microphone hears) and run `n` hold frames.
+    defp held(view, readings, n) do
+      Enum.reduce(1..n, view, fn _, v ->
+        audio = Fake.put_readings(assigns(v).audio, readings)
+        %{v | socket: Mob.Socket.assign(v.socket, :audio, audio)} |> tick()
+      end)
+    end
+
+    defp paused_on_note do
+      view = ready_view()
+      note = Enum.at(assigns(view).song.notes, 10)
+      t = note.start_ms + 0.5 * note.dur_ms
+      {view |> render_info({:seek, t}), note}
+    end
+
+    # A level reading as the engine gives it while paused: no song time.
+    defp heard(midi), do: {-1.0e9, midi, 0.9, -20.0}
+    defp silent, do: {-1.0e9, nil, 0.0, -70.0}
+
+    test "the voice is measured against the note under the playhead, low, then on pitch" do
+      {view, note} = paused_on_note()
+      refute assigns(view).playing
+
+      low = held(view, [heard(note.midi - 0.4)], 12)
+      a = assigns(low)
+      assert match?({:low, _}, a.feedback.status)
+      assert {midi, _} = a.hold_voice
+      assert_in_delta midi, note.midi - 0.4, 0.001
+      assert_renderable(low)
+
+      on = held(low, [heard(note.midi + 0.05)], 30)
+      assert assigns(on).feedback.status == :on_pitch
+    end
+
+    test "scrubbed to a far note while paused, the roll comes round to it" do
+      view = ready_view()
+      song = assigns(view).song
+      start = assigns(view).center_midi
+      far = Enum.find(song.notes, &(abs(&1.midi - start) >= 5))
+      moved = view |> render_info({:seek, far.start_ms + far.dur_ms / 2}) |> held([], 20)
+      assert_in_delta assigns(moved).center_midi, far.midi, 0.5
+    end
+
+    test "an octave below counts as the written note, like while playing" do
+      {view, note} = paused_on_note()
+      a = view |> held([heard(note.midi - 12)], 30) |> assigns()
+      assert a.feedback.status == :on_pitch
+    end
+
+    test "a stray reading (a harmonic, a noise) doesn't move the voice" do
+      {view, note} = paused_on_note()
+      steady = held(view, [heard(note.midi), heard(note.midi), heard(note.midi)], 3)
+      glitch = held(steady, [heard(note.midi - 7.5), heard(note.midi)], 1)
+
+      assert {midi, _} = assigns(glitch).hold_voice
+      assert_in_delta midi, note.midi, 0.001
+      assert assigns(glitch).feedback.status == :on_pitch
+    end
+
+    test "it slows down in silence and stays awake only while someone sings" do
+      {view, note} = paused_on_note()
+      singing = held(view, [heard(note.midi)], 3)
+      assert assigns(singing).hold_awake
+      assert Process.read_timer(assigns(singing).tick_timer) <= 33
+
+      # Two seconds of silence (61 frames of 33 ms, then slower): one frame
+      # per 150 ms.
+      quiet = held(singing, [silent()], 70)
+      assert assigns(quiet).hold_voice == nil
+      assert Process.read_timer(assigns(quiet).tick_timer) > 33
+
+      # Twenty seconds of silence: the screen may sleep again.
+      asleep = held(quiet, [silent()], 140)
+      refute assigns(asleep).hold_awake
+    end
+
+    test "playing ends the hold; the test mode track isn't held" do
+      {view, note} = paused_on_note()
+      playing = view |> held([heard(note.midi)], 3) |> render_info({:tap, :play_pause})
+      assert assigns(playing).playing
+      refute assigns(playing).hold_awake
+
+      test_mode = render_info(view, {:listen, :playback})
+      assert assigns(test_mode).listening == :playback
+      quiet = tick(test_mode)
+      assert assigns(quiet).tick_timer == nil
+    end
+
+    test "in the background the hold stops, and starts again in front" do
+      {view, note} = paused_on_note()
+      singing = held(view, [heard(note.midi)], 3)
+      timer = assigns(singing).tick_timer
+
+      away = render_info(singing, {:mob_device, :did_enter_background})
+      assert {assigns(away).tick_timer, assigns(away).hold_awake} == {nil, false}
+      assert Process.read_timer(timer) == false
+      # A frame already queued does nothing.
+      assert assigns(render_info(away, {:tick, assigns(singing).tick_token})).tick_timer == nil
+
+      back = render_info(away, {:mob_device, :will_enter_foreground})
+      assert is_integer(Process.read_timer(assigns(back).tick_timer))
+
+      assert match?(
+               {:low, _},
+               back
+               |> held([heard(note.midi - 0.4)], 12)
+               |> assigns()
+               |> Map.get(:feedback)
+               |> Map.get(:status)
+             )
+    end
+
+    test "a drag on the progress track has no frames of the hold's own; its release holds again" do
+      {view, _note} = paused_on_note()
+      timer = assigns(view).tick_timer
+
+      dragging =
+        view
+        |> render_info({:drag, :scrub, %{x: 120.0, phase: :began}})
+        |> render_info({:drag, :scrub, %{x: 140.0, phase: :dragging}})
+
+      assert assigns(dragging).tick_timer == nil
+      assert Process.read_timer(timer) == false
+
+      released = render_info(dragging, {:drag, :scrub, %{x: 150.0, phase: :ended}})
+      refute assigns(released).playing
+      assert is_integer(Process.read_timer(assigns(released).tick_timer))
+    end
+
+    test "a drag whose end never came is closed by play / pause, so pausing holds again" do
+      {view, _note} = paused_on_note()
+      # The finger lifted, but the bridge lost the drag's end.
+      stuck = render_info(view, {:drag, :scrub, %{x: 120.0, phase: :began}})
+      assert assigns(stuck).scrub != nil
+
+      paused = stuck |> render_info({:tap, :play_pause}) |> render_info({:tap, :play_pause})
+      assert {assigns(paused).playing, assigns(paused).scrub} == {false, nil}
+      assert is_integer(Process.read_timer(assigns(paused).tick_timer))
+    end
+
+    test "a drag that goes quiet (its end lost) ends where it was: paused holds, playing plays on" do
+      {view, _note} = paused_on_note()
+
+      moved =
+        view
+        |> render_info({:drag, :scrub, %{x: 120.0, phase: :began}})
+        |> render_info({:drag, :scrub, %{x: 160.0, phase: :dragging}})
+
+      t = assigns(moved).t_ms
+
+      # An earlier event's timer is stale: only the latest one ends the drag.
+      stale = render_info(moved, {:scrub_idle, make_ref()})
+      assert assigns(stale).scrub != nil
+
+      ended = render_info(moved, {:scrub_idle, assigns(moved).scrub.token})
+
+      assert {assigns(ended).scrub, assigns(ended).playing, assigns(ended).t_ms} ==
+               {nil, false, t}
+
+      assert is_integer(Process.read_timer(assigns(ended).tick_timer))
+
+      playing = render_info(ended, {:tap, :play_pause})
+      dragged = render_info(playing, {:drag, :scrub, %{x: 200.0, phase: :began}})
+      refute assigns(dragged).playing
+      resting = render_info(dragged, {:drag, :scrub, %{x: 200.0, phase: :dragging}})
+      resumed = render_info(resting, {:scrub_idle, assigns(resting).scrub.token})
+      assert assigns(resumed).playing
+
+      # The finger was only resting: the music went on under it, and its lift
+      # where it rested neither pauses nor rewinds.
+      later = %{
+        resumed
+        | socket: Mob.Socket.assign(resumed.socket, :t_ms, assigns(resumed).t_ms + 3_000)
+      }
+
+      lifted = render_info(later, {:drag, :scrub, %{x: 200.5, phase: :ended}})
+      assert assigns(lifted).playing
+      assert assigns(lifted).t_ms == assigns(later).t_ms
+
+      # A drag that moves on does seek again.
+      moved_on = render_info(lifted, {:drag, :scrub, %{x: 260.0, phase: :began}})
+      refute assigns(moved_on).playing
+      assert assigns(moved_on).t_ms != assigns(later).t_ms
+    end
+
+    test "in a rest, sound in the room doesn't count or keep the screen awake" do
+      view = ready_view()
+      song = assigns(view).song
+
+      gap =
+        Enum.find(Enum.chunk_every(song.notes, 2, 1, :discard), fn [a, b] ->
+          b.start_ms - (a.start_ms + a.dur_ms) >= 300
+        end)
+
+      [before, _] = gap
+
+      rest =
+        view
+        |> render_info({:seek, before.start_ms + before.dur_ms + 100})
+        |> held([heard(before.midi)], 10)
+
+      a = assigns(rest)
+      assert {a.hold_voice, a.hold_awake} == {nil, false}
+      assert Process.read_timer(a.tick_timer) > 33
+    end
   end
 
   test "a frame mid-phrase takes the voice's readings and shows feedback" do
@@ -419,7 +645,7 @@ defmodule ChoirCoach.PracticeScreenTest do
         away
         |> render_info(old_ready)
         |> render_info(old_error)
-        |> render_info(:tick)
+        |> tick()
         |> render_info({:listen, :playback})
 
       b = assigns(after_events)
@@ -472,14 +698,14 @@ defmodule ChoirCoach.PracticeScreenTest do
       playing = ready_view() |> put_time(40_000.0) |> render_info({:tap, :play_pause})
       Fake.hold_elsewhere()
 
-      ticked = render_info(playing, :tick)
+      ticked = tick(playing)
       assert_received {:choir_audio, :not_owner, _, _} = lost
       detached = render_info(ticked, lost)
       a = assigns(detached)
       assert {a.attached, a.playing, a.listening} == {false, false, :off}
 
       # Detached, it makes no calls: none of them refused, nothing changed.
-      again = detached |> render_info(:tick) |> render_info({:tap, :play_pause})
+      again = detached |> tick() |> render_info({:tap, :play_pause})
       refute_received {:choir_audio, :not_owner, _, _}
       assert assigns(again).audio == a.audio
     end
@@ -759,4 +985,7 @@ defmodule ChoirCoach.PracticeScreenTest do
   end
 
   defp put_time(view, t), do: %{view | socket: Mob.Socket.assign(view.socket, :t_ms, t * 1.0)}
+
+  # The frame the screen has pending, delivered now.
+  defp tick(view), do: render_info(view, {:tick, assigns(view).tick_token})
 end
