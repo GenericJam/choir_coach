@@ -47,6 +47,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <UIKit/UIKit.h>
 #include <erl_nif.h>
 #include <mach/mach_time.h>
 #include <math.h>
@@ -1865,6 +1866,25 @@ static int on_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
     return 0;
 }
 
+/* screen_size() -> {Width, Height}: the main screen in points. Not audio:
+ * Mob's :mob_nif.screen_info/0 is test-harness-only on iOS and compiled out
+ * of release builds, so the app reads the size here (as Mob does: on the
+ * main thread, hence dirty IO). Remove once Mob ships it in release. */
+static ERL_NIF_TERM nif_screen_size(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    __block CGRect bounds = CGRectZero;
+    if ([NSThread isMainThread]) {
+        bounds = [UIScreen mainScreen].bounds;
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+          bounds = [UIScreen mainScreen].bounds;
+        });
+    }
+    return enif_make_tuple2(env, enif_make_double(env, bounds.size.width),
+                            enif_make_double(env, bounds.size.height));
+}
+
 static ErlNifFunc nif_funcs[] = {
     /* Dirty IO where the call may start, stop or dispose a unit or queue,
      * change the audio session, join a thread, or wait for the lock a load
@@ -1884,6 +1904,7 @@ static ErlNifFunc nif_funcs[] = {
     {"set_input", 1, nif_set_input, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"output_device", 0, nif_output_device, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"info", 0, nif_info, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"screen_size", 0, nif_screen_size, ERL_NIF_DIRTY_JOB_IO_BOUND},
 };
 
 ERL_NIF_INIT(Elixir.ChoirCoach.Audio.Nif, nif_funcs, on_load, NULL, NULL, NULL)

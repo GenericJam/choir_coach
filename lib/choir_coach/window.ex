@@ -16,6 +16,7 @@ defmodule ChoirCoach.Window do
   iOS), so a window narrower than the screen is measured as the screen.
   """
 
+  alias ChoirCoach.Audio.Nif
   alias ChoirCoach.Style
 
   # The reference artboard, where the device can't be asked (host tests,
@@ -25,15 +26,28 @@ defmodule ChoirCoach.Window do
   @doc "The size to lay out for at mount: `params.screen`, else the device's."
   def size(params), do: Map.get_lazy(params, :screen, &current/0)
 
-  @doc "The device's screen size now, `{width, height}` in pt / dp."
+  @doc """
+  The device's screen size now, `{width, height}` in pt / dp. On iOS from
+  the app's own plugin: Mob's `:mob_nif.screen_info/0` belongs to its test
+  harness there and is compiled out of release builds, where calling it
+  crashed the first screen and ended the app (TestFlight builds 1 and 2).
+  """
   def current do
-    if device_calls?() do
-      %{width: w, height: h} = :mob_nif.screen_info()
-      {w * 1.0, h * 1.0}
-    else
-      Application.get_env(:choir_coach, :screen, @fallback)
+    cond do
+      not device_calls?() ->
+        Application.get_env(:choir_coach, :screen, @fallback)
+
+      ios?() ->
+        {w, h} = Nif.screen_size()
+        {w * 1.0, h * 1.0}
+
+      true ->
+        %{width: w, height: h} = :mob_nif.screen_info()
+        {w * 1.0, h * 1.0}
     end
   end
+
+  defp ios?, do: match?({:unix, :darwin}, :os.type())
 
   @doc "Subscribe the calling screen to rotations, plus Mob.Device `categories`."
   def follow(categories \\ []) do

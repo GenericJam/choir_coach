@@ -87,4 +87,11 @@ defmodule ChoirCoach.Audio.Nif do
 
   @doc "Engine diagnostics."
   def info, do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc """
+  iOS only: the main screen's `{width, height}` in points. Not audio: Mob's
+  `:mob_nif.screen_info/0` is compiled out of iOS release builds, so the
+  app's own iOS plugin reports the size (`ChoirCoach.Window.current/0`).
+  """
+  def screen_size, do: :erlang.nif_error(:nif_not_loaded)
 end
