@@ -126,27 +126,31 @@ defmodule ChoirCoach.Audio.Native.Io do
     end
   end
 
-  # The NIF plays once the stream runs; a stream (re)opened for it plays
-  # from the same place again (closing one under the music pauses it).
+  # The NIF plays once the stream runs. A stream opened fresh plays from
+  # there by itself; one reopened at another rate stopped under the music
+  # (which paused it), so it plays from the same place again.
   def handle_call({:play, pid, from_ms}, _from, state) do
     nif = Native.nif()
 
-    with {:ok, rate} <- nif.play(pid, from_ms) do
-      state = cancel_idle(state)
+    case nif.play(pid, from_ms) do
+      {:ok, rate} ->
+        state = cancel_idle(state)
+        previous = state.out
 
-      case ensure_output(state, rate) do
-        {:ok, ^state} ->
-          {:reply, :ok, state}
+        case ensure_output(state, rate) do
+          {:ok, %{out: out} = opened} when previous in [nil, out] ->
+            {:reply, :ok, opened}
 
-        {:ok, state} ->
-          {:reply, replay(nif.play(pid, from_ms)), state}
+          {:ok, reopened} ->
+            {:reply, replay(nif.play(pid, from_ms)), reopened}
 
-        {:error, state} ->
-          nif.halt()
-          {:reply, {:error, :output_unavailable}, state}
-      end
-    else
-      error -> {:reply, error, state}
+          {:error, state} ->
+            nif.halt()
+            {:reply, {:error, :output_unavailable}, state}
+        end
+
+      error ->
+        {:reply, error, state}
     end
   end
 
@@ -218,7 +222,7 @@ defmodule ChoirCoach.Audio.Native.Io do
   @impl true
   def handle_info({:idle_close, ref}, %{idle: ref} = state) do
     state = %{state | idle: nil}
-    if Native.nif().playing(), do: {:noreply, state}, else: {:noreply, close_stream(state, :out)}
+    if Native.nif().playing(), do: {:noreply, state}, else: {:noreply, close_output(state)}
   end
 
   def handle_info({:idle_close, _stale}, state), do: {:noreply, state}

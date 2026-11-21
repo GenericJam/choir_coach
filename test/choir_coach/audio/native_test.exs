@@ -133,6 +133,10 @@ defmodule ChoirCoach.Audio.NativeTest do
     test "play opens one output stream at the tracks' rate; once paused a while it closes; play reopens" do
       state = loaded()
       {:ok, state} = Native.play(state, 500.0)
+
+      # Opened fresh, it plays from 500 ms once (a second seek would repeat
+      # what it had already played).
+      assert [{:play, _, 500.0}] = FakeAudioNif.calls(:play)
       assert [out] = streams("choir_out")
       assert {out.rate, out.channels, out.session} == {44_100, 2, :play_and_record}
       assert {:playing, 500.0} = Native.position(state)
@@ -367,6 +371,16 @@ defmodule ChoirCoach.Audio.NativeTest do
       assert Native.output_device(state) == "speaker"
       Native.set_output(state, nil)
       assert FakeIos.speaker() == false
+    end
+
+    test "an output closed once paused a while plays on no device" do
+      Fake.set_devices(:output, [%{id: "wired-uid", name: "Headphones", kind: :wired_headphones}])
+      state = loaded()
+      {:ok, state} = Native.play(state, 0.0)
+      assert Native.output_device(state) == "out:wired-uid"
+      state = Native.pause(state)
+      eventually(fn -> streams("choir_out") == [] end)
+      assert Native.output_device(state) == nil
     end
 
     test "the input is chosen by its port" do
