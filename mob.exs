@@ -73,9 +73,7 @@ config :mob, :plugins, [:mob_audio_io, :choir_ios]
 
 # choir_ios is this app's own code, reviewed with it, so it builds unsigned
 # instead of carrying a signing key (mob_dev prints a banner).
-# mob_audio_io is a git dependency until 0.1.0 is on Hex, unsigned; once
-# released it moves to :trusted_plugins with the mob release key.
-config :mob, :acknowledge_unsafe_plugins, [:choir_ios, :mob_audio_io]
+config :mob, :acknowledge_unsafe_plugins, [:choir_ios]
 
 # Trust gate for the first-party plugins. Each is signed in CI with the shared
 # mob release key; this is that key's public fingerprint. The build refuses an
@@ -87,6 +85,7 @@ config :mob, :acknowledge_unsafe_plugins, [:choir_ios, :mob_audio_io]
 # [...]` for an unsigned prototype.
 config :mob, :trusted_plugins, %{
   mob_audio_capture: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",
+  mob_audio_io: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",
   mob_camera: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",
   mob_location: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",
   mob_biometric: "ed25519:nc56w+1Kx0gIt/4EkHxnMZCKHMzp4+S5kS/HoSzEZkg=",

@@ -28,11 +28,8 @@ defmodule ChoirCoach.MixProject do
       # mob_audio_io needs 0.9.31 or later.
       {:mob, "~> 0.9.31"},
       # The audio streams, devices and file decoding under the app's DSP
-      # (c_src/choir_audio.c's processors). Temporary: main's commit until
-      # 0.1.0 is on Hex, then {:mob_audio_io, "~> 0.1"} (and its mob.exs
-      # entry moves to :trusted_plugins).
-      {:mob_audio_io,
-       github: "GenericJam/mob_audio_io", ref: "faf1de89b969f5d43a0bf43ff2740008cd35039b"},
+      # (c_src/choir_audio.c's processors), signed on Hex.
+      {:mob_audio_io, "~> 0.1"},
       # Choir Coach's iOS-only native bits (the screen size, the speaker
       # route, pausing when the route loses its device), an in-repo Mob
       # plugin activated in mob.exs.

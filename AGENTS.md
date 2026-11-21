@@ -297,7 +297,7 @@ every note on pitch.
 
 The streams, devices and file decoding are `mob_audio_io`'s (AAudio and
 `AMediaCodec` on Android, RemoteIO, the `AVAudioSession` and `ExtAudioFile`
-on iOS; a git dependency on its main until 0.1.0 is on Hex). The app keeps
+on iOS; the signed Hex dependency `{:mob_audio_io, "~> 0.1"}`, locked to 0.1.0). The app keeps
 its DSP, `c_src/choir_io.c` (plain C, no BEAM, no platform API) as four
 processors, and `c_src/choir_audio.c`, the `choir_audio` NIF over it (one
 static NIF, `archs: [:all]`):
@@ -352,8 +352,8 @@ compiled out of iOS release builds), the speaker override (set again at
 every play: iOS clears it on route changes), and pausing when the route
 loses its device (headphones unplugged; the plugin's `:route_changed`
 doesn't say why). It is activated in `mob.exs` (`:plugins`, and
-`:acknowledge_unsafe_plugins` since it's unsigned app code; `mob_audio_io`
-too until it is released and signed).
+`:acknowledge_unsafe_plugins` since it's unsigned app code). `mob_audio_io`
+instead verifies against the shared release key in `:trusted_plugins`.
 
 Checks without a device: `cc -std=c11 -O1 -g -Wall -Wextra -Werror
 -fsanitize=address,undefined -o /tmp/choir_io_host
