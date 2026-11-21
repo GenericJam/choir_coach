@@ -103,13 +103,12 @@ its tokens live in `ChoirCoach.Style`.
   which don't exist yet.
 - `ChoirCoach.Audio` — the engine contract (song-time load / play / pause /
   stop / position / mix / listen / readings, devices). `Audio.Native` wraps
-  the `choir_audio` NIF (Android: `c_src/choir_audio.c`: AAudio playback and
-  mic, NDK decoder, YIN in `c_src/pitch_yin.c`, loaded with dlopen; iOS: the
-  same NIF in Objective-C, see "The iOS audio engine").
+  the `choir_audio` NIF, the app's DSP as `mob_audio_io` processors on both
+  platforms (see "The audio engine"), YIN in `c_src/pitch_yin.c`.
   `load/2` takes up to 2 files on one timeline; each kept channel is a lane,
   mixed in the output callback with per-lane L/R gains (`set_mix/2` after
-  every load). Devices come from Android's `AudioManager` over JNI (Mob's
-  `g_jvm`); `set_output/2` / `set_input/2` pick them. The NIF is one engine
+  every load). Devices come from `MobAudioIo.devices/1` in the engine's
+  kinds; `set_output/2` / `set_input/2` pick them. The NIF is one engine
   per app with one holder process, enforced in the NIF under its lock:
   `acquire/2` (`force` takes it from a live holder, stopping its music and
   mic; otherwise `:busy` unless free or the holder died), `release/1`, and
@@ -130,10 +129,12 @@ its tokens live in `ChoirCoach.Style`.
   Events are `{:choir_audio, event, payload, tag}` (load events tagged
   with the load, `:mic_error` with the listening, `:not_owner` with the
   holding); a screen acts on one only if `Audio.current?(state, event)`,
-  so a replaced load's late `:ready` can't reach the next. Streams are only
-  closed once quiet (`stop_and_close`); one that won't stop is kept open and
-  load fails with `:output_stuck`, leaving the old buffers in place: never
-  free a buffer while a callback can still run. Mic readings while nothing
+  so a replaced load's late `:ready` can't reach the next. Never free a
+  buffer while a callback can still run: the NIF refuses a load while the
+  output stream or a decode is open, and `Audio.Native.Io` closes and
+  waits for them first (`:output_stuck` is still in the contract, but
+  `mob_audio_io`'s close returns once no callback can run, so it no longer
+  happens). Mic readings while nothing
   plays come at a far-negative song time (for the level meter).
   `Audio.Fake` (host tests) is a clock plus `ChoirCoach.FakeSinger`, with
   canned devices.
@@ -292,48 +293,92 @@ every note on pitch.
    `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
 
-## The iOS audio engine
+## The audio engine
 
-`plugins/choir_audio_ios/priv/native/ios/choir_audio_ios.m` is the
-`choir_audio` NIF for iOS: same functions, return shapes, events, ownership
-and locking as `c_src/choir_audio.c` (read that for the semantics), so
-`Audio.Native` runs unchanged. RemoteIO output at the track's rate (the unit
-resamples; each buffer anchors a stream frame to when it is heard, its host
-time plus the session's output latency), AudioQueue mic input (each buffer's
-host time, less the input latency, is its capture time), ExtAudioFile
-decoding (mono and stereo MP3; a read error part way ends the load with
-`:decode_error`, as a codec error does on Android; buffers grow should a
-file outlast its stated length), `#include`s `c_src/pitch_yin.c`. As on
-Android, the mic and test mode each have their own sample ring (one
-producer each), and a seek only sets `seek_to`, which the output callback
-applies. The audio
-session is play-and-record in the default mode (RemoteIO, no voice
-processing), DefaultToSpeaker + AllowBluetoothA2DP; activated on acquire,
-play and listen, deactivated on release. An interruption pauses at the
-heard position (the next play reopens the unit) and fails a listening mic
-(`:input_error`); a route losing its device pauses, and `:disconnected` if
-the mic went with it. Devices: the current route's outputs plus the speaker
-(an override target), and the session's available inputs, with ids handed
-out per run. `set_output` can only override to the speaker (any other id:
-the system route); `set_input` sets the preferred input. Without HFP
-(which would also take music to call quality) a Bluetooth headset's mic
-isn't offered. `info/0`'s `output_xruns` is always 0.
+The streams, devices and file decoding are `mob_audio_io`'s (AAudio and
+`AMediaCodec` on Android, RemoteIO, the `AVAudioSession` and `ExtAudioFile`
+on iOS; the signed Hex dependency `{:mob_audio_io, "~> 0.1"}`, locked to 0.1.0). The app keeps
+its DSP, `c_src/choir_io.c` (plain C, no BEAM, no platform API) as four
+processors, and `c_src/choir_audio.c`, the `choir_audio` NIF over it (one
+static NIF, `archs: [:all]`):
 
-It is built as an in-repo Mob plugin, the supported way to add an
-Objective-C NIF and iOS frameworks (a project static NIF is C only): the path
-dep `{:choir_audio_ios, path: "plugins/choir_audio_ios"}`, activated in
-`mob.exs` (`:plugins`, and `:acknowledge_unsafe_plugins` since it's unsigned
-app code), manifest `priv/mob_plugin.exs` (`lang: :objc, platform: :ios`,
-AVFoundation + AudioToolbox). Its static-NIF name is `choir_audio_ios`, not
-`choir_audio`: mob_dev compiles `c_src/<name>.c` for any static NIF of that
-name, which would put the Android engine in the iOS build. The BEAM matches a
-static NIF by the module its `ERL_NIF_INIT` names
-(`Elixir.ChoirCoach.Audio.Nif`), so `load_nif(~c"choir_audio", 0)` finds it
-either way. `mix mob.deploy --native --ios --device <udid>` builds it; check
-it alone with `xcrun -sdk iphonesimulator cc -arch arm64
--mios-simulator-version-min=17.0 -fobjc-arc -fmodules -Wall -Wextra
--I ~/.mob/cache/otp-ios-sim-*/erts-*/include{,/aarch64-apple-iossimulator}
--DSTATIC_ERLANG_NIF_LIBNAME=choir_audio_ios -c …/choir_audio_ios.m -o /tmp/x.o`.
+- `"choir_src0"`, `"choir_src1"`: a source file's decode
+  (`MobAudioIo.decode_stream/3` with `processor:`), each kept channel into
+  16-bit mono blocks of 64 Ki frames allocated as it decodes (playback starts
+  before the files are in; a file longer than it says still fits, up to 50
+  minutes). `:ready` after 3 s of every source, `:decoded` at the end; the
+  sources must share one rate (`:mismatched_sources`). A read error part
+  way ends the load with `:decode_error`.
+- `"choir_out"`: output at the tracks' rate, mixing the lanes into both
+  ears; when the stream runs at another rate (the plugin opens at the
+  device's if it must) it resamples with a 4-point Hermite curve. Each
+  block anchors a stream frame to when it is heard (`mai_time.present_ns`:
+  iOS `mHostTime` plus the session's output latency, AAudio timestamps on
+  Android 12+, an estimate below); a seek only sets `seek_to`, which the
+  callback applies, marking a segment (stream frame ↔ track frame). Test
+  mode pushes the guide lane into its own ring at the tracks' rate.
+- `"choir_mic"`: the microphone into its ring with each block's capture
+  time (`present_ns`, or the block's end at the callback when unknown).
+- The analysis thread runs YIN every 10 ms on one of the rings and maps a
+  reading's capture time through the anchor and segments onto the song.
+
+`ChoirCoach.Audio.Native.Io` (one process, started in `App.on_start`) owns
+the streams and decodes and makes the NIF calls that start or stop
+something on the holder's behalf (`acquire/2`, `load/3`, `play/2`,
+`listen/2` take the holder's pid); position, mix, readings and pause go to
+the NIF from the screen. Output (`session: :play_and_record`:
+PlayAndRecord with DefaultToSpeaker + AllowBluetoothA2DP on iOS) opens on
+play and closes once paused 3 s, on a load, a release or a change of
+holder; Android asks the plugin for low latency, iOS for the 10 ms IO
+buffer the engine always used. The mic stream uses the plugin's `:default`
+preset (Android VOICE_RECOGNITION, iOS default mode: no voice processing).
+A lost output device, an interruption or a media-services reset pauses at
+the heard position (the next play reopens); the mic's loss is
+`:mic_error` `:disconnected` (its device went) or `:input_error`.
+
+Devices: Android lists what `AudioManager` lists (a Bluetooth output with
+an A2DP sibling of the same name is that headset's call route,
+`:bluetooth_sco`, hidden on the Audio screen); iOS the current route's
+outputs plus the speaker (`"speaker"`, an override target), and the
+session's available inputs, ids `"out:"`/`"in:"` plus the port UID.
+`set_output` on iOS can only override to the speaker; without HFP (which
+would also take music to call quality) a Bluetooth headset's mic isn't
+offered.
+
+What neither Mob nor `mob_audio_io` does yet is `ChoirCoach.Ios`, the
+`choir_ios` NIF of the in-repo plugin `plugins/choir_ios` (Objective-C;
+a project static NIF is C only): the screen size (Mob's `screen_info` is
+compiled out of iOS release builds), the speaker override (set again at
+every play: iOS clears it on route changes), and pausing when the route
+loses its device (headphones unplugged; the plugin's `:route_changed`
+doesn't say why). It is activated in `mob.exs` (`:plugins`, and
+`:acknowledge_unsafe_plugins` since it's unsigned app code). `mob_audio_io`
+instead verifies against the shared release key in `:trusted_plugins`.
+
+Checks without a device: `cc -std=c11 -O1 -g -Wall -Wextra -Werror
+-fsanitize=address,undefined -o /tmp/choir_io_host
+c_src/test/choir_io_host.c -lm -lpthread && /tmp/choir_io_host` (decode
+into blocks across their boundaries, ready/decoded, mismatched rates, the
+mix sample for sample, the position through the anchor, resampling 44.1 →
+48 kHz, test mode and mic readings, the pause where a lost output was
+heard; also under `-fsanitize=thread`). The NIF for Android:
+`$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang
+--target=aarch64-linux-android28 --sysroot=$NDK/toolchains/llvm/prebuilt/darwin-x86_64/sysroot
+-I ~/.mob/cache/otp-android-*/erts-*/include -DSTATIC_ERLANG_NIF_LIBNAME=choir_audio
+-std=c11 -Wall -Wextra -Werror -c -o /tmp/choir_audio.o c_src/choir_audio.c`
+(also `armv7a-linux-androideabi28 -mfloat-abi=softfp -mfpu=neon`,
+`x86_64-linux-android28`); for iOS `xcrun --sdk iphoneos clang -arch arm64
+-mios-version-min=15.0 -I ~/.mob/cache/otp-ios-device-*/erts-*/include` and
+the same flags, and `plugins/choir_ios/priv/native/ios/choir_ios.m` with
+`-fobjc-arc -fmodules`. The whole native build without a device:
+`MobDev.NativeBuild.prepare_plugin_build_state!()` then
+`MobDev.NativeBuild.build_android_native(MobDev.Config.load_mob_config())`.
+`test/choir_coach/audio/native_test.exs` runs `Audio.Native` and its `Io`
+on `MobAudioIo.Fake` with a double of the NIF.
+
+The figures below were measured with the engine before `mob_audio_io`
+(its own RemoteIO/AudioQueue and AAudio code); measure again before
+relying on them.
 
 On the iPhone 18 Pro simulator (Mac speakers and mic):
 `SOURCE=playback scripts/device_check.exs` (NODE
@@ -436,11 +481,9 @@ either; that's the App Store Connect website.
   were then redrawn: the artwork trimmed (`-crop 728x875+143+70`), scaled to
   56 % of the icon's height and centred on #0B1017, so it sits inside the
   visible 72/108 circle. Re-running `mob.icon` overwrites them: redo that step.
-- Check the C before a device build:
-  `$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=aarch64-linux-android24
-  --sysroot=… -I ~/.mob/cache/otp-android-*/erts-*/include
-  -DSTATIC_ERLANG_NIF_LIBNAME=choir_audio -Wall -Wextra -fsyntax-only c_src/choir_audio.c`.
-  The detector alone builds on the Mac: `cc -O2 -o /tmp/pitch_host
+- Check the C before a device build: see "The audio engine" (the host
+  harness `c_src/test/choir_io_host.c`, the NDK and Xcode compiles). The
+  detector alone builds on the Mac: `cc -O2 -o /tmp/pitch_host
   c_src/test/pitch_host.c -lm`, fed `ffmpeg … -f f32le -` PCM.
 - `SERIAL=<serial> mix run --no-start scripts/controls_check.exs` drives
   every practice-screen control on a connected Android phone with **real**

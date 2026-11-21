@@ -16,7 +16,6 @@ defmodule ChoirCoach.Window do
   iOS), so a window narrower than the screen is measured as the screen.
   """
 
-  alias ChoirCoach.Audio.Nif
   alias ChoirCoach.Style
 
   # The reference artboard, where the device can't be asked (host tests,
@@ -28,7 +27,7 @@ defmodule ChoirCoach.Window do
 
   @doc """
   The device's screen size now, `{width, height}` in pt / dp. On iOS from
-  the app's own plugin: Mob's `:mob_nif.screen_info/0` belongs to its test
+  the app's own plugin (`ChoirCoach.Ios`): Mob's `:mob_nif.screen_info/0` belongs to its test
   harness there and is compiled out of release builds, where calling it
   crashed the first screen and ended the app (TestFlight builds 1 and 2).
   """
@@ -38,7 +37,7 @@ defmodule ChoirCoach.Window do
         Application.get_env(:choir_coach, :screen, @fallback)
 
       ios?() ->
-        {w, h} = Nif.screen_size()
+        {w, h} = ChoirCoach.Ios.screen_size()
         {w * 1.0, h * 1.0}
 
       true ->

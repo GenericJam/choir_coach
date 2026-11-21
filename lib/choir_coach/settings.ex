@@ -18,6 +18,8 @@ defmodule ChoirCoach.Settings do
   alto, tenor or bass), opened with the melody beside it.
   """
 
+  alias ChoirCoach.Audio
+
   @min 0
   @max 400
   @step 10
@@ -33,7 +35,7 @@ defmodule ChoirCoach.Settings do
   the device the open stream `actual`ly plays on, else the `preferred` one,
   else the default route, else the speaker. nil when there are no outputs.
   """
-  @spec active_output([map()], integer() | nil, integer() | nil) :: map() | nil
+  @spec active_output([map()], Audio.device_id() | nil, Audio.device_id() | nil) :: map() | nil
   def active_output(devices, actual, preferred) do
     outputs = Enum.filter(devices, &(&1.direction == :output))
     id = actual || preferred
@@ -92,7 +94,7 @@ defmodule ChoirCoach.Settings do
   device's `device_key/1`: that id while it is still the same device, else
   the device with that key under its new id (ids change across reboots).
   """
-  @spec output_pref([map()]) :: integer() | nil
+  @spec output_pref([map()]) :: Audio.device_id() | nil
   def output_pref(devices), do: resolve_pref(Mob.State.get(:output_pref), devices, :output)
 
   @doc "Save the picked output: a device from `devices/1`, or nil for the default."
@@ -100,7 +102,7 @@ defmodule ChoirCoach.Settings do
   def put_output_pref(device), do: Mob.State.put(:output_pref, pref(device))
 
   @doc "The microphone the singer picked, resolved like `output_pref/1`."
-  @spec input_pref([map()]) :: integer() | nil
+  @spec input_pref([map()]) :: Audio.device_id() | nil
   def input_pref(devices), do: resolve_pref(Mob.State.get(:input_pref), devices, :input)
 
   @spec put_input_pref(map() | nil) :: :ok

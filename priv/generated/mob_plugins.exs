@@ -7,9 +7,9 @@
   default_font: nil,
   default_style: nil,
   lifecycle: [],
-  nifs: [:choir_audio_ios],
+  nifs: [:mob_audio_io_nif, :choir_ios],
   notification_handlers: [],
-  plugins: [:choir_audio_ios],
+  plugins: [:mob_audio_io, :choir_ios],
   screens: [],
   settings: [],
   styles: []

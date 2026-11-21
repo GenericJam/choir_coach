@@ -45,6 +45,7 @@ void *nx_eigen_nif_init(void);
 void *tflite_nif_nif_init(void);
 #endif
 void *choir_audio_nif_init(void);
+void *mob_audio_io_nif_nif_init(void);
 
 ErtsStaticNif erts_static_nif_tab[] = {
     {prim_tty_nif_init,     0, THE_NON_VALUE, NULL},
@@ -65,5 +66,6 @@ ErtsStaticNif erts_static_nif_tab[] = {
     {tflite_nif_nif_init,   0, THE_NON_VALUE, NULL},
 #endif
     {choir_audio_nif_init,  0, THE_NON_VALUE, NULL},
+    {mob_audio_io_nif_nif_init,0, THE_NON_VALUE, NULL},
     {NULL,                  0, THE_NON_VALUE, NULL}
 };
