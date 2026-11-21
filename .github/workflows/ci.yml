@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # .tool-versions
+          - elixir: '1.20.0-otp-29'
+            otp: '29.1.2'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          version-type: strict
+          install-hex: true
+          install-rebar: true
+
+      - name: Cache compiled build artifacts
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: mix-${{ runner.os }}-${{ env.MIX_ENV }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-${{ env.MIX_ENV }}-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
+
+      - name: Compile (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+      - name: Format check
+        run: mix format --check-formatted
+
+      - name: Credo (strict)
+        run: mix credo --strict
+
+      - name: Tests
+        run: mix test
+
+  c-host:
+    name: Host C engine harnesses
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pitch_host (the detector)
+        run: cc -O2 -Wall -Wextra -o /tmp/pitch_host c_src/test/pitch_host.c -lm
+
+      # choir_io.c includes the plugin's header from deps/ (MOB-541): fetch the
+      # commit mix.lock pins without the Elixir toolchain.
+      - name: Check out mob_audio_io at mix.lock's commit
+        run: |
+          ref=$(grep -o '"mob_audio_io": {:git, "[^"]*", "[0-9a-f]\{40\}"' mix.lock | grep -o '[0-9a-f]\{40\}')
+          git clone -q https://github.com/GenericJam/mob_audio_io deps/mob_audio_io
+          git -C deps/mob_audio_io checkout -q "$ref"
+
+      - name: choir_io_host (the engine's processors, ASan + UBSan)
+        run: |
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -o /tmp/choir_io_host c_src/test/choir_io_host.c -lm -lpthread
+          /tmp/choir_io_host
+
+      # TSan's shadow memory doesn't fit the runner's 32 bits of mmap randomness.
+      - name: choir_io_host (TSan)
+        run: |
+          sudo sysctl vm.mmap_rnd_bits=28
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=thread \
+            -o /tmp/choir_io_tsan c_src/test/choir_io_host.c -lm -lpthread
+          /tmp/choir_io_tsan

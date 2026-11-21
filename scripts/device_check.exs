@@ -21,7 +21,7 @@ source = String.to_atom(System.get_env("SOURCE", "playback"))
 from_bar = String.to_integer(System.get_env("FROM_BAR", "20"))
 seconds = String.to_integer(System.get_env("SECS", "10"))
 
-IO.inspect(:rpc.call(node, ChoirCoach.Audio.Nif, :info, []), label: "engine")
+IO.inspect(:rpc.call(node, ChoirCoach.Audio.Native, :info, []), label: "engine")
 
 a = Mob.Test.assigns(node)
 IO.puts("audio=#{inspect(a.audio_status)} mic=#{inspect(a.mic)} listening=#{inspect(a.listening)} mix=#{ChoirCoach.Mix.caption(a.mix)}")
@@ -71,4 +71,4 @@ end
 
 {best_shift, best} = Enum.max_by(for(s <- -300..300//10, do: {s, match.(s)}), &elem(&1, 1))
 IO.puts("\nreadings: #{length(readings)}; match at 0 ms: #{round(match.(0) * 100)}%, best #{round(best * 100)}% at #{best_shift} ms")
-IO.inspect(:rpc.call(node, ChoirCoach.Audio.Nif, :info, []), label: "engine after")
+IO.inspect(:rpc.call(node, ChoirCoach.Audio.Native, :info, []), label: "engine after")

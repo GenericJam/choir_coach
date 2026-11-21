@@ -37,7 +37,7 @@ Mob.Test.tap(node, :play_pause)
 IO.puts("screen ticks: #{frames} in #{wall} ms => #{Float.round(frames * 1000 / wall, 1)} fps")
 IO.inspect(:rpc.call(node, Mob.RenderStats, :summary, []), label: "beam", limit: :infinity)
 IO.inspect(:rpc.call(node, Mob.RenderStats, :native_summary, []), label: "native", limit: :infinity)
-IO.inspect(Map.take(:rpc.call(node, ChoirCoach.Audio.Nif, :info, []), [:output_xruns, :listening]), label: "audio")
+IO.inspect(Map.take(:rpc.call(node, ChoirCoach.Audio.Native, :info, []), [:output_xruns, :listening]), label: "audio")
 
 :rpc.call(node, Mob.RenderStats, :disable, [])
 :rpc.call(node, Mob.RenderStats, :native_disable, [])

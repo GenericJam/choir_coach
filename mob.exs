@@ -56,21 +56,26 @@ config :mob_dev,
   # Android ignores it. The per-window navigation needs a mob release with
   # Mob.Scene (not released yet, mob#184): keep false until then.
   multi_window: false,
-  # The Android audio engine (c_src/choir_audio.c: AAudio, NDK MediaCodec).
-  # iOS links the same NIF from the choir_audio_ios plugin below.
-  static_nifs: [%{module: :choir_audio, archs: [:android]}]
+  # The audio engine's DSP (c_src/choir_audio.c over c_src/choir_io.c): plain
+  # C over mob_audio_io's C ABI (the plugin owns the streams and decoding),
+  # so it builds for both platforms.
+  static_nifs: [%{module: :choir_audio, archs: [:all]}]
 
 # Activated capability plugins (the packages added in mix.exs). Each contributes
 # its native code, permissions, and any demo screens at build time. Drop a name
 # here to deactivate a plugin without removing the dep; remove both to drop it
 # entirely (the native build shrinks and a clean rebuild prunes its artifacts).
-# choir_audio_ios: the iOS audio engine (plugins/choir_audio_ios, Objective-C
-# `choir_audio` NIF + AVFoundation/AudioToolbox), part of this repo.
-config :mob, :plugins, [:choir_audio_ios]
+# mob_audio_io: the audio streams, devices and decoding under the engine.
+# choir_ios: Choir Coach's iOS-only native bits (plugins/choir_ios,
+# Objective-C `choir_ios` NIF: the screen size, the speaker override, a
+# route losing its device), part of this repo.
+config :mob, :plugins, [:mob_audio_io, :choir_ios]
 
-# choir_audio_ios is this app's own code, reviewed with it, so it builds
-# unsigned instead of carrying a signing key (mob_dev prints a banner).
-config :mob, :acknowledge_unsafe_plugins, [:choir_audio_ios]
+# choir_ios is this app's own code, reviewed with it, so it builds unsigned
+# instead of carrying a signing key (mob_dev prints a banner).
+# mob_audio_io is a git dependency until 0.1.0 is on Hex, unsigned; once
+# released it moves to :trusted_plugins with the mob release key.
+config :mob, :acknowledge_unsafe_plugins, [:choir_ios, :mob_audio_io]
 
 # Trust gate for the first-party plugins. Each is signed in CI with the shared
 # mob release key; this is that key's public fingerprint. The build refuses an

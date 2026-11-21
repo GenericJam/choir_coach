@@ -3,8 +3,8 @@ defmodule ChoirCoach.Audio do
   Playback and listening for the practice screen, behind an engine:
 
     * `ChoirCoach.Audio.Native` — the device: plays the rehearsal tracks and
-      detects the singer's pitch from the microphone (`c_src/choir_audio.c`
-      on Android, `plugins/choir_audio_ios` on iOS).
+      detects the singer's pitch from the microphone (`c_src/choir_audio.c`'s
+      processors on `mob_audio_io`'s streams, both platforms).
     * `ChoirCoach.Audio.Fake` — host tests: a monotonic clock and the
       scripted `ChoirCoach.FakeSinger`.
 
@@ -90,7 +90,9 @@ defmodule ChoirCoach.Audio do
           | :usb
           | :builtin_mic
           | :other
-  @type device :: %{id: integer(), direction: :output | :input, kind: kind(), name: String.t()}
+  @typedoc "A device id: Android's device id, an iOS port's (a string)."
+  @type device_id :: integer() | String.t()
+  @type device :: %{id: device_id(), direction: :output | :input, kind: kind(), name: String.t()}
 
   @callback new(Song.t()) :: state()
   @doc "An engine on the bare file timeline (song time = track time), for sounds such as calibration clicks."
@@ -123,9 +125,9 @@ defmodule ChoirCoach.Audio do
   @callback readings_with_level(state()) :: {[level_reading()], state()}
   @doc "Connected audio devices: outputs, then inputs."
   @callback devices(state()) :: [device()]
-  @callback set_output(state(), integer() | nil) :: state()
-  @callback set_input(state(), integer() | nil) :: {:ok, state()} | {:error, term(), state()}
-  @callback output_device(state()) :: integer() | nil
+  @callback set_output(state(), device_id() | nil) :: state()
+  @callback set_input(state(), device_id() | nil) :: {:ok, state()} | {:error, term(), state()}
+  @callback output_device(state()) :: device_id() | nil
 
   @doc """
   The rule both engines' `current?/2` follow. Events carry a tag: a load's

@@ -19,6 +19,17 @@ config :choir_coach,
   audio_engine:
     if(config_env() == :test, do: ChoirCoach.Audio.Fake, else: ChoirCoach.Audio.Native)
 
+# ChoirCoach.Audio.Native's own tests run it on the host: mob_audio_io's fake
+# streams and decodes, and doubles of the choir_audio and choir_ios NIFs.
+if config_env() == :test do
+  config :mob_audio_io, backend: MobAudioIo.Fake
+
+  config :choir_coach,
+    audio_nif: ChoirCoach.Test.FakeAudioNif,
+    ios_nif: ChoirCoach.Test.FakeIos,
+    audio_idle_ms: 50
+end
+
 # How late mic readings arrive after the singer is heard, in ms. Measured on
 # the moto g power 2021 with scripts/device_check.exs: the phone hearing its
 # own speaker (SOURCE=mic) fits the score 60 ms later than the track analysed

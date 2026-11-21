@@ -4,6 +4,7 @@ defmodule ChoirCoach.App do
   use Mob.App
 
   alias ChoirCoach.Audio.Lease
+  alias ChoirCoach.Audio.Native.Io
 
   @impl Mob.App
   def navigation(_platform) do
@@ -30,6 +31,10 @@ defmodule ChoirCoach.App do
     Ecto.Migrator.with_repo(ChoirCoach.Repo, fn repo ->
       Ecto.Migrator.run(repo, migrations_dir(), :up, all: true)
     end)
+
+    # Owns the audio engine's mob_audio_io streams and decodes (see
+    # ChoirCoach.Audio.Native.Io).
+    {:ok, _} = Io.start_link()
 
     # Hands the audio engine back to the practice screen when the Audio
     # screen that borrowed it goes away (see ChoirCoach.Audio.Lease).
