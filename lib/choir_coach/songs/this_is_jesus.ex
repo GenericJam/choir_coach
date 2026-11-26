@@ -33,6 +33,9 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
   @doc "The parts: the four voice parts, top down, then the melody."
   def parts, do: [:soprano, :alto, :tenor, :bass, :melody]
 
+  @doc "Not congregational: the choir sings it, so it opens on the singer's part."
+  def congregational?, do: false
+
   @doc """
   Each part's recordings: where bar 1 falls on each (ms), and which channel
   holds the voices. The part rehearsal tracks share one timeline.
@@ -59,7 +62,8 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
         file: "this_is_jesus/bass.mp3",
         bar1_ms: 560.0,
         voice: :left,
-        label: "Bass rehearsal"
+        label: "Bass rehearsal",
+        detail: "All voices, bass loudest"
       }
     }
   end
@@ -70,7 +74,8 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
         file: "this_is_jesus/soprano.mp3",
         bar1_ms: 560.0,
         voice: :left,
-        label: "Soprano rehearsal"
+        label: "Soprano rehearsal",
+        detail: "All voices, sopranos loudest"
       }
     }
   end
@@ -91,7 +96,8 @@ defmodule ChoirCoach.Songs.ThisIsJesus do
         file: "this_is_jesus/#{part}.mp3",
         bar1_ms: 560.0,
         voice: :left,
-        label: "#{name} rehearsal"
+        label: "#{name} rehearsal",
+        detail: "All voices, #{part} loudest"
       }
     }
   end

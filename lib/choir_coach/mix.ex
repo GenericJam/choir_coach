@@ -2,9 +2,11 @@ defmodule ChoirCoach.Mix do
   @moduledoc """
   What the singer hears: the "What you hear" sheet's model.
 
-  A part's rehearsal recording (`tracks.rehearsal`) has all voices, its part
-  loudest, on the left and the band on the right; when the part has a piano
-  rendering (`tracks.piano`) its left channel is the part alone on piano.
+  A part's rehearsal recording (`tracks.rehearsal`) has the voices on one
+  channel (its `voice`: `:left` on a part rehearsal track, where all voices
+  sing with the part loudest; `:right` on a split track, all voices alike)
+  and the band on the other; when the part has a piano rendering
+  (`tracks.piano`) its left channel is the part alone on piano.
   Each becomes a **row** the singer turns on or off and places with a level
   (0–100) and a balance (−100 left … +100 right):
 
@@ -15,8 +17,9 @@ defmodule ChoirCoach.Mix do
   On a mono output (the phone speaker) both ears get the average of the two.
 
   Rows are `:part_piano` (only when the part has a piano track), `:voices`
-  and `:band`. The engine plays them as lanes: the piano's left channel
-  (when there is one), then the rehearsal track's left and right channels.
+  (named by the rehearsal track's `label` and `detail`) and `:band`. The
+  engine plays them as lanes: the piano's left channel (when there is one),
+  then the rehearsal track's voices channel and its band channel.
 
   The whole-recording presets ("Full choir" = `tracks.split`, "Demo" =
   `tracks.demo`) instead play one file as recorded; the rows are kept, so
@@ -67,10 +70,25 @@ defmodule ChoirCoach.Mix do
     rows =
       if(Map.has_key?(tracks, :piano), do: [:part_piano], else: [])
       |> Kernel.++([:voices, :band])
-      |> Enum.map(&blank_row(&1, part))
+      |> Enum.map(&blank_row(&1, part, tracks))
 
     apply_preset(%{part: part, preset: :custom, recording: nil, rows: rows}, :rehearsal)
   end
+
+  @doc """
+  The mix to start a song's part with: `saved` (the part's last-used mix,
+  kept per part across songs, or nil) fitted to this song's `tracks`. Rows
+  come from the song (its piano row, its rehearsal track's name); a preset
+  is re-applied, and a custom mix or "My mix" keeps the rows it shares with
+  the song, leaving any other row off.
+  """
+  @spec fit(t() | nil, part(), map()) :: t()
+  def fit(nil, part, tracks), do: new(part, tracks)
+
+  def fit(%{preset: preset} = saved, part, tracks) when preset in [:custom, :my_mix],
+    do: %{take_rows(new(part, tracks), saved) | preset: preset}
+
+  def fit(saved, part, tracks), do: apply_preset(new(part, tracks), saved.preset)
 
   @doc "The preset chips, in order; \"My mix\" only when a mix is saved."
   @spec presets(t(), t() | nil) :: [%{id: preset_id(), label: String.t()}]
@@ -91,19 +109,7 @@ defmodule ChoirCoach.Mix do
 
   def apply_preset(mix, :my_mix, nil), do: mix
 
-  def apply_preset(mix, :my_mix, saved) do
-    saved_rows = Map.new(saved.rows, &{&1.id, &1})
-
-    rows =
-      Enum.map(mix.rows, fn row ->
-        case Map.fetch(saved_rows, row.id) do
-          {:ok, s} -> %{row | on: s.on, level: s.level, balance: s.balance}
-          :error -> %{row | on: false}
-        end
-      end)
-
-    %{mix | preset: :my_mix, recording: nil, rows: rows}
-  end
+  def apply_preset(mix, :my_mix, saved), do: %{take_rows(mix, saved) | preset: :my_mix}
 
   def apply_preset(mix, id, _saved) when id in [:rehearsal, :right_ear] do
     settings = preset_rows(id, lead_id(mix))
@@ -156,9 +162,9 @@ defmodule ChoirCoach.Mix do
 
   @doc """
   The engine load spec. Rows: the piano's left channel (when there is a
-  piano row), then the rehearsal track's left and right; the guide lane is
-  the piano, else the voices. A recording: that file, both channels, no
-  guide lane.
+  piano row), then the rehearsal track's voices and band channels; the
+  guide lane is the piano, else the voices. A recording: that file, both
+  channels, no guide lane.
   """
   @spec load_spec(t(), map()) :: spec()
   def load_spec(%{recording: nil} = mix, tracks) do
@@ -169,9 +175,11 @@ defmodule ChoirCoach.Mix do
         do: [%{file: tracks.piano.file, channels: [:left]}],
         else: []
 
+    channels = if rehearsal.voice == :right, do: [:right, :left], else: [:left, :right]
+
     %{
       bar1_ms: rehearsal.bar1_ms / 1,
-      sources: piano ++ [%{file: rehearsal.file, channels: [:left, :right]}],
+      sources: piano ++ [%{file: rehearsal.file, channels: channels}],
       guide_lane: 0
     }
   end
@@ -252,20 +260,32 @@ defmodule ChoirCoach.Mix do
   def same_load?(%{recording: rec}, %{recording: rec}), do: true
   def same_load?(_a, _b), do: false
 
-  defp blank_row(id, part) do
-    {label, detail} = row_text(id, part)
+  # `mix` with `saved`'s settings on the rows both have; its other rows off.
+  defp take_rows(mix, saved) do
+    saved_rows = Map.new(saved.rows, &{&1.id, &1})
+
+    rows =
+      Enum.map(mix.rows, fn row ->
+        case Map.fetch(saved_rows, row.id) do
+          {:ok, s} -> %{row | on: s.on, level: s.level, balance: s.balance}
+          :error -> %{row | on: false}
+        end
+      end)
+
+    %{mix | recording: nil, rows: rows}
+  end
+
+  defp blank_row(id, part, tracks) do
+    {label, detail} = row_text(id, part, tracks)
     %{id: id, label: label, detail: detail, on: false, level: @off_level, balance: 0}
   end
 
-  defp row_text(:part_piano, part),
+  defp row_text(:part_piano, part, _tracks),
     do: {"#{part_name(part)} on piano", "Like your rehearsal pianist"}
 
-  defp row_text(:voices, :melody), do: {"Soprano rehearsal", "All voices, sopranos loudest"}
+  defp row_text(:voices, _part, %{rehearsal: rehearsal}), do: {rehearsal.label, rehearsal.detail}
 
-  defp row_text(:voices, part),
-    do: {"#{part_name(part)} rehearsal", "All voices, #{part} loudest"}
-
-  defp row_text(:band, _part), do: {"Band", "Accompaniment"}
+  defp row_text(:band, _part, _tracks), do: {"Band", "Accompaniment"}
 
   defp part_name(part), do: part |> Atom.to_string() |> String.capitalize()
 end

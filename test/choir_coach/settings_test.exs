@@ -83,7 +83,15 @@ defmodule ChoirCoach.SettingsTest do
   end
 
   test "a saved mix comes back as My mix" do
-    tracks = %{rehearsal: %{file: "s/bass.mp3", bar1_ms: 0.0}}
+    tracks = %{
+      rehearsal: %{
+        file: "s/bass.mp3",
+        bar1_ms: 0.0,
+        label: "Bass rehearsal",
+        detail: "All voices"
+      }
+    }
+
     assert Settings.saved_mix(:bass) == nil
 
     custom = Mix.new(:bass, tracks) |> Mix.set_row(:band, :level, 30)

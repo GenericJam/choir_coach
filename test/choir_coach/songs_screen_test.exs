@@ -13,16 +13,20 @@ defmodule ChoirCoach.SongsScreenTest do
     for module <- Songs.all(), mine <- Settings.voice_parts() do
       bars = Enum.map(module.bass().bars, &{&1.number, &1.start_ms, &1.dur_ms})
       parts = Songs.parts(module, mine)
-      assert Keyword.keys(parts) == [mine, :melody]
+
+      # A congregational song opens on the melody, the others on the singer's part.
+      expected = if module.congregational?(), do: [:melody, mine], else: [mine, :melody]
+      assert Keyword.keys(parts) == expected
 
       for {part, %{song: song, tracks: tracks}} <- parts do
         assert Enum.map(song.bars, &{&1.number, &1.start_ms, &1.dur_ms}) == bars
         assert song.part == part
 
-        # Each part's rehearsal track, the shared choir and demo; a piano for every voice part.
+        # A rehearsal track, the shared choir and demo; a piano for every voice
+        # part, and for the melody of a congregational song.
         assert Enum.all?(Map.values(tracks), &String.ends_with?(&1.file, ".mp3"))
         assert Map.has_key?(tracks, :rehearsal) and Map.has_key?(tracks, :split)
-        assert Map.has_key?(tracks, :piano) == (part != :melody)
+        assert Map.has_key?(tracks, :piano) == (part != :melody or module.congregational?())
       end
     end
   end

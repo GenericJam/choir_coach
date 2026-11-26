@@ -120,7 +120,8 @@ for _ <- 1..3, Mob.Test.screen(node) != ChoirCoach.SongsScreen do
 end
 
 # The singer's part (PART=soprano|alto|tenor|bass, default bass), picked on
-# the song list with a real tap; every song then opens on it.
+# the song list with a real tap; every song then opens on it, or on the
+# melody in a congregational song.
 mine = String.to_existing_atom(System.get_env("PART", "bass"))
 IO.puts("== Your part: #{mine}")
 
@@ -137,15 +138,16 @@ results =
     title = mod.bass().title
     IO.puts("\n== #{title}")
     Mob.Test.tap(node, {:open, mod})
+    first = if mod.congregational?(), do: :melody, else: mine
 
     steps = [
-      {"loads, on my part",
+      {"loads, on #{if first == :melody, do: "the melody", else: "my part"}",
        fn ->
          Check.until(
            ctx,
            10_000,
            &(Mob.Test.screen(node) == ChoirCoach.PracticeScreen and &1.audio_status == :ready and
-               &1.part == mine)
+               &1.part == first)
          )
        end},
       {"play starts playback (real tap)",
@@ -245,18 +247,19 @@ results =
              Check.until(ctx, 1_500, &(not &1.mix_open))
            )
        end},
-      {"Melody and back to my part, playing on at the same place",
+      {"to the other part and back, playing on at the same place",
        fn ->
          s0 = Check.a(ctx)
-         {t, mine} = {s0.t_ms, s0.part}
-         Check.tap(ctx, "part_melody")
-         melody = Check.until(ctx, 5_000, &(&1.part == :melody and &1.playing))
-         Check.tap(ctx, "part_#{mine}")
-         back = Check.until(ctx, 5_000, &(&1.part == mine and &1.playing))
+         {t, start} = {s0.t_ms, s0.part}
+         [other] = Keyword.keys(s0.parts) -- [start]
+         Check.tap(ctx, "part_#{other}")
+         there = Check.until(ctx, 5_000, &(&1.part == other and &1.playing))
+         Check.tap(ctx, "part_#{start}")
+         back = Check.until(ctx, 5_000, &(&1.part == start and &1.playing))
          s = Check.a(ctx)
 
-         (melody and back and abs(s.t_ms - t) < 8_000) or
-           {:error, "melody=#{melody} #{mine}=#{back} moved #{round(s.t_ms - t)} ms"}
+         (there and back and abs(s.t_ms - t) < 8_000) or
+           {:error, "#{other}=#{there} #{start}=#{back} moved #{round(s.t_ms - t)} ms"}
        end},
       {"restart goes back to the start",
        fn ->

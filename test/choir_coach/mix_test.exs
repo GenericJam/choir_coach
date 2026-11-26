@@ -7,12 +7,32 @@ defmodule ChoirCoach.MixTest do
   @demo %{file: "song/demo.mp3", bar1_ms: 18_449.0, voice: :mixed, label: "Demo"}
   @bass %{
     piano: %{file: "song/piano_bass.mp3", bar1_ms: 358.0, voice: :left, label: "Piano"},
-    rehearsal: %{file: "song/bass.mp3", bar1_ms: 358.0, voice: :left, label: "Rehearsal"},
+    rehearsal: %{
+      file: "song/bass.mp3",
+      bar1_ms: 358.0,
+      voice: :left,
+      label: "Bass rehearsal",
+      detail: "All voices, bass loudest"
+    },
     split: @split,
     demo: @demo
   }
   @melody %{
-    rehearsal: %{file: "song/soprano.mp3", bar1_ms: 358.0, voice: :left, label: "Rehearsal"},
+    rehearsal: %{
+      file: "song/soprano.mp3",
+      bar1_ms: 358.0,
+      voice: :left,
+      label: "Soprano rehearsal",
+      detail: "All voices, sopranos loudest"
+    },
+    split: @split,
+    demo: @demo
+  }
+  # A congregational song's melody: a piano rendering, and the split track
+  # (all voices right, band left) as its rehearsal track.
+  @choir_melody %{
+    piano: %{file: "song/piano_melody.mp3", bar1_ms: 409.0, voice: :left, label: "Piano"},
+    rehearsal: Map.put(@split, :detail, "All voices together"),
     split: @split,
     demo: @demo
   }
@@ -179,6 +199,55 @@ defmodule ChoirCoach.MixTest do
     refute Mix.same_load?(bass, choir)
     refute Mix.same_load?(choir, Mix.apply_preset(bass, :demo))
     refute Mix.same_load?(bass, Mix.new(:melody, @melody))
+  end
+
+  test "a split track as the rehearsal: its voices are the right channel" do
+    mix = Mix.new(:melody, @choir_melody)
+
+    assert Enum.map(mix.rows, &{&1.id, &1.label}) ==
+             [{:part_piano, "Melody on piano"}, {:voices, "Choir"}, {:band, "Band"}]
+
+    assert Mix.load_spec(mix, @choir_melody) == %{
+             bar1_ms: 409.0,
+             sources: [
+               %{file: "song/piano_melody.mp3", channels: [:left]},
+               %{file: "song/split.mp3", channels: [:right, :left]}
+             ],
+             guide_lane: 0
+           }
+  end
+
+  describe "fit: a part's last mix, kept across songs, meets the next song" do
+    test "nothing saved: the song's default" do
+      assert Mix.fit(nil, :melody, @choir_melody) == Mix.new(:melody, @choir_melody)
+    end
+
+    test "a preset is re-applied, so a piano the song has leads" do
+      last = Mix.new(:melody, @melody) |> Mix.apply_preset(:right_ear)
+      mix = Mix.fit(last, :melody, @choir_melody)
+
+      assert Mix.caption(mix) == "Right ear"
+      assert %{on: true, level: 75, balance: 80} = row(mix, :part_piano)
+      assert %{on: false, label: "Choir"} = row(mix, :voices)
+    end
+
+    test "a custom mix keeps the rows the song has; a piano it lacks is dropped" do
+      last =
+        Mix.new(:melody, @choir_melody)
+        |> Mix.set_row(:part_piano, :balance, 30)
+        |> Mix.toggle_row(:voices)
+
+      mix = Mix.fit(last, :melody, @melody)
+
+      assert Mix.caption(mix) == "Custom"
+      assert Enum.map(mix.rows, & &1.id) == [:voices, :band]
+      assert %{on: true, label: "Soprano rehearsal"} = row(mix, :voices)
+      assert [%{file: "song/soprano.mp3"}] = Mix.load_spec(mix, @melody).sources
+      assert length(Mix.lane_gains(mix, false)) == 2
+
+      # Back on a song with a piano, the piano the custom mix didn't keep stays off.
+      assert %{on: false} = row(Mix.fit(mix, :melody, @choir_melody), :part_piano)
+    end
   end
 
   test "value labels show the balance side, or a dash on mono" do

@@ -77,6 +77,25 @@ defmodule ChoirCoach.PracticeScreenTest do
     end
   end
 
+  test "a congregational song opens on the melody, and its melody mix (with a piano) doesn't break a choir song's melody" do
+    joy =
+      PracticeScreen
+      |> mount_screen(%{@params | parts: Songs.parts(Songs.JoyToTheWorld, :bass)})
+      |> ready()
+
+    assert assigns(joy).part == :melody
+    assert Enum.map(assigns(joy).mix.rows, & &1.label) == ["Melody on piano", "Choir", "Band"]
+
+    # The melody mix is kept per part across songs; the next song's melody has no piano.
+    Settings.put_mix(:melody, assigns(render_info(joy, {:tap, {:preset, :right_ear}})).mix)
+
+    melody = ready_view() |> render_info({:tap, {:part, :melody}}) |> ready()
+    assert assigns(melody).part == :melody
+
+    assert Enum.map(assigns(melody).audio.spec.sources, & &1.file) ==
+             [GloriousNight.tracks(:melody).rehearsal.file]
+  end
+
   test "restart and pause keep a single frame loop" do
     playing = render_info(ready_view(), {:tap, :play_pause})
     timer = assigns(playing).tick_timer

@@ -104,7 +104,7 @@ defmodule ChoirCoach.PracticeScreen do
     part = Map.get(params, :part, parts |> hd() |> elem(0))
     %{song: song, tracks: tracks} = Keyword.fetch!(parts, part)
     engine = Audio.engine()
-    mix = Settings.mix(part) || Mix.new(part, tracks)
+    mix = Mix.fit(Settings.mix(part), part, tracks)
     first = hd(song.notes)
     audio = engine.new(song)
     devices = engine.devices(audio)
@@ -1638,7 +1638,7 @@ defmodule ChoirCoach.PracticeScreen do
     persist_mix(socket)
     a = socket.assigns
     %{song: song, tracks: tracks} = Keyword.fetch!(a.parts, part)
-    mix = Settings.mix(part) || Mix.new(part, tracks)
+    mix = Mix.fit(Settings.mix(part), part, tracks)
     near = Song.note_at(song, a.t_ms) || Song.next_note(song, a.t_ms) || hd(song.notes)
 
     socket

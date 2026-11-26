@@ -55,17 +55,20 @@ its tokens live in `ChoirCoach.Style`.
   on). Notes keep their written spelling (`"Bb2"` sits on the B line) and
   carry the accidental the staff prints. `ChoirCoach.Songs` lists the songs
   and builds the two a singer practises (`Songs.parts(module, my_part)`:
-  their part, marked by `ChoirCoach.Roles`, and the melody); each
+  their part, marked by `ChoirCoach.Roles`, and the melody, in the order
+  the practice screen offers them: the melody first in a congregational
+  song, where everyone sings the tune, else their part first); each
   `ChoirCoach.Songs.*` module has `parts/0`, one function per part
   (`soprano/0`, `alto/0`, `tenor/0`, `bass/0`, `melody/0`) built from its
   bars plus the shared `timing/0` (all parts are on one bar timeline, so
-  one set of track offsets serves them all), and `tracks/1`. Soprano and
-  alto use the treble clef, tenor and bass the bass clef, all at sounding
-  pitch.
+  one set of track offsets serves them all), `tracks/1` and
+  `congregational?/0`. Soprano and alto use the treble clef, tenor and bass
+  the bass clef, all at sounding pitch.
 - `ChoirCoach.SongsScreen` — the root: "Your part" (Soprano · Alto · Tenor
   · Bass, saved as `Settings.my_part/0`, bass until picked) and the song
   list. Tapping a song pushes the practice screen with
-  `%{parts: Songs.parts(module, my_part)}`.
+  `%{parts: Songs.parts(module, my_part)}`; it opens on the first, so a
+  congregational song opens on the melody.
 - `ChoirCoach.PracticeView` — pure: one frame (song, playhead time, sung-pitch
   trace, smoothed feedback) → `Mob.Canvas` ops. The staff follows the song's
   clef: bass for tenor and bass, treble for soprano, alto and the melody;
@@ -94,13 +97,18 @@ its tokens live in `ChoirCoach.Style`.
   everyone) or "Part" (your own line). It depends on the melody
   transcription, so fix a wrong tag there, not here.
 - `ChoirCoach.Mix` — pure: what the singer hears. A part's sources are rows
-  (`:part_piano` (voice parts, not the melody), `:voices` (the part's rehearsal track, left),
-  `:band` (its right)), each with on, level 0–100 and balance −100…100;
+  (`:part_piano` (when the part has a piano track), `:voices` (the rehearsal
+  track's voice channel, its `voice`: left on a part rehearsal track, right
+  on a split track; named by the track's `label` and `detail`), `:band`
+  (the other channel)), each with on, level 0–100 and balance −100…100;
   presets Rehearsal, Me in right ear, Full choir / Demo (whole recordings,
   a single file), My mix. `load_spec/2` gives the engine's sources and
   lanes; `lane_gains/2` the per-lane L/R gains (L = level·min(1, 1−b),
-  R = level·min(1, 1+b); mono averages). "Without me" needs voice stems,
-  which don't exist yet.
+  R = level·min(1, 1+b); mono averages). The last mix is kept per part
+  across songs; `fit/3` fits it to the song (a preset re-applied, a custom
+  mix's rows kept where the song has them), so a melody mix with a piano
+  row can open a song whose melody has none. "Without me" needs voice
+  stems, which don't exist yet.
 - `ChoirCoach.Audio` — the engine contract (song-time load / play / pause /
   stop / position / mix / listen / readings, devices). `Audio.Native` wraps
   the `choir_audio` NIF, the app's DSP as `mob_audio_io` processors on both
@@ -234,22 +242,27 @@ them; they ship inside the app). The downloads live in `audio_src/<song>/`
 (gitignored, outside `priv/` so they don't ship); `scripts/compress_audio.sh`
 makes the shipped 128 kbps copies in `priv/audio/<song>/` (gitignored too),
 which reach the phone with the BEAMs on deploy and inside the release
-bundle. Each song has `soprano.mp3`, `alto.mp3`, `tenor.mp3` and `bass.mp3`
+bundle. Each choir song has `soprano.mp3`, `alto.mp3`, `tenor.mp3` and `bass.mp3`
 (all voices left with that part loudest, the others about 12 dB down;
 accompaniment right; the part tracks share one timeline exactly),
 `split.mp3` (accompaniment left, full choir right) and `demo.mp3` (finished
 mix). No file has a part alone, and the part tracks can't be unmixed (each
 is its own vocal mix). Offsets live in each song's `tracks/1`. The melody's
-rehearsal track is the soprano's, since the tune is mostly theirs.
+rehearsal track is the soprano's, since the tune is mostly theirs. A
+congregational song (The Joy / Joy to the World) comes with only
+`split.mp3` and `demo.mp3`: the split track is every part's rehearsal
+track (`voice: :right`, "Choir").
 
-`piano_<part>.mp3` (soprano, alto, tenor, bass) is generated, not
+`piano_<part>.mp3` (soprano, alto, tenor, bass, and the melody of a
+congregational song) is generated, not
 downloaded: the part alone as piano notes (as at in-person rehearsal),
 mono, 64 kbps, on and as long as the rehearsal track's timeline: the
 mixer's "<Part> on piano" row (the engine takes it as one lane, which the
-row's gains send to either ear). The melody has no piano: its
+row's gains send to either ear). A choir song's melody has no piano: its
 notes are canonical (transcribed, checked against the recordings) for the
 pitch checking, and the closest recordings are the Soprano rehearsal track
-and the demo. Regenerate a part's piano after any change to its notes or
+and the demo. A congregational song has no part-loudest track, so its
+melody gets a piano like the parts. Regenerate a part's piano after any change to its notes or
 timing: `brew install fluid-synth`, get a General MIDI SoundFont
 (GeneralUser GS lives in `~/.local/share/soundfonts/` here), then
 `SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> <part>`.
@@ -292,6 +305,13 @@ every note on pitch.
    for each voice part; `tracks/1` points at it with the rehearsal track's
    `bar1_ms`.
 7. Add the module to `ChoirCoach.Songs`.
+
+A congregational song (everyone sings the melody; the Drive folder has the
+score, a split track and the full mix, no part tracks):
+`congregational?/0` is true, `split.mp3` is every part's rehearsal track,
+and the melody comes first: transcribe it and fit the timing on the
+split's voice channel (all voices; a flag is often another voice), render
+a piano for every part including the melody.
 
 ## The audio engine
 
@@ -493,7 +513,8 @@ either; that's the App Store Connect website.
   controls by their `id` (`Mob.Test.element_frames/1`), so any screen size
   works. Run it after any change to the practice screen or the engine;
   `Mob.Test.tap/2` skips the native tap path, so it can't catch lost taps.
-  Moto g power 2021: 52 of 52 steps pass.
+  Moto g power 2021: 71 of 71 steps pass (a congregational song opens on
+  the melody and switches to the singer's part and back).
 - `scripts/device_check.exs` plays a stretch and reports what the screen
   showed and how well the trace fits the score; `SOURCE=playback` analyses
   the track itself, `SOURCE=mic` the microphone. The phone hearing its own
