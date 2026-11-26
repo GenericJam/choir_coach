@@ -8,9 +8,23 @@ defmodule ChoirCoach.Songs do
   part and the melody (`parts/2`).
   """
 
-  alias ChoirCoach.Songs.{GloriousNight, GraceOfGod, HolyForever, JoyToTheWorld, ThisIsJesus}
+  alias ChoirCoach.Songs.{
+    GloriousNight,
+    GraceOfGod,
+    HolyForever,
+    JoyToTheWorld,
+    OComeAllYeFaithful,
+    ThisIsJesus
+  }
 
-  @modules [JoyToTheWorld, GloriousNight, HolyForever, GraceOfGod, ThisIsJesus]
+  @modules [
+    JoyToTheWorld,
+    OComeAllYeFaithful,
+    GloriousNight,
+    HolyForever,
+    GraceOfGod,
+    ThisIsJesus
+  ]
 
   @doc "Every song's module, in list order."
   @spec all() :: [module()]

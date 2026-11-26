@@ -251,7 +251,13 @@ is its own vocal mix). Offsets live in each song's `tracks/1`. The melody's
 rehearsal track is the soprano's, since the tune is mostly theirs. A
 congregational song (The Joy / Joy to the World) comes with only
 `split.mp3` and `demo.mp3`: the split track is every part's rehearsal
-track (`voice: :right`, "Choir").
+track (`voice: :right`, "Choir"). A song whose recordings don't follow the
+score (O Come, All Ye Faithful: band tracks in another key and form, no
+singer) has its `split.mp3` and `demo.mp3` rendered from the score instead
+(`scripts/render_score.exs <Module>`: the module's `accompaniment/0`, the
+score's piano part as layers of `Song`s, on piano left; the four parts on
+Choir Aahs right; both stems at the same level; the demo has both in both
+ears), written straight into `priv/audio/`.
 
 `piano_<part>.mp3` (soprano, alto, tenor, bass, and the melody of a
 congregational song) is generated, not
@@ -262,7 +268,9 @@ row's gains send to either ear). A choir song's melody has no piano: its
 notes are canonical (transcribed, checked against the recordings) for the
 pitch checking, and the closest recordings are the Soprano rehearsal track
 and the demo. A congregational song has no part-loudest track, so its
-melody gets a piano like the parts. Regenerate a part's piano after any change to its notes or
+melody gets a piano like the parts. Each piano sits 3 dB under the
+rehearsal track's band channel, where the part tracks put the voices (a
+split track's choir can be far quieter). Regenerate a part's piano after any change to its notes or
 timing: `brew install fluid-synth`, get a General MIDI SoundFont
 (GeneralUser GS lives in `~/.local/share/soundfonts/` here), then
 `SOUNDFONT=… MIX_ENV=test mix run --no-start scripts/render_piano.exs <Module> <part>`.
@@ -312,6 +320,12 @@ score, a split track and the full mix, no part tracks):
 and the melody comes first: transcribe it and fit the timing on the
 split's voice channel (all voices; a flag is often another voice), render
 a piano for every part including the melody.
+
+A song rendered from its score (the sheet music is canonical and no
+recording follows it): transcribe the parts and the piano part
+(`accompaniment/0`) unrolled in performance order, check every voice note
+against the piano's harmony (nothing else can check it), then
+`scripts/render_score.exs <Module>` before `render_piano.exs` for each part.
 
 ## The audio engine
 
@@ -513,7 +527,7 @@ either; that's the App Store Connect website.
   controls by their `id` (`Mob.Test.element_frames/1`), so any screen size
   works. Run it after any change to the practice screen or the engine;
   `Mob.Test.tap/2` skips the native tap path, so it can't catch lost taps.
-  Moto g power 2021: 71 of 71 steps pass (a congregational song opens on
+  Moto g power 2021: 85 of 85 steps pass (a congregational song opens on
   the melody and switches to the singer's part and back).
 - `scripts/device_check.exs` plays a stretch and reports what the screen
   showed and how well the trace fits the score; `SOURCE=playback` analyses
