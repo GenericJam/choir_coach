@@ -132,11 +132,17 @@ defmodule ChoirCoach.Mix do
   defp lead_id(mix),
     do: if(Enum.any?(mix.rows, &(&1.id == :part_piano)), do: :part_piano, else: :voices)
 
-  @doc "Set a row's `:level` (0–100) or `:balance` (−100…100); the mix becomes Custom."
+  @doc """
+  Set a row's `:level` (0–100) or `:balance` (−100…100); the mix becomes
+  Custom. Moving either switches the row on (level 0 off), so a slider always
+  does something the singer hears: an off row's sliders otherwise change
+  nothing, which reads as the track not playing.
+  """
   @spec set_row(t(), row_id(), :level | :balance, number()) :: t()
   def set_row(mix, id, field, value) when field in [:level, :balance] do
     value = clamp(field, value)
-    custom(mix, id, &Map.put(&1, field, value))
+    on = field == :balance or value > 0
+    custom(mix, id, &(&1 |> Map.put(field, value) |> Map.put(:on, on)))
   end
 
   @doc "Turn a row on or off; the mix becomes Custom."

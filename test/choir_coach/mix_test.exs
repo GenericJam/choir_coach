@@ -124,6 +124,19 @@ defmodule ChoirCoach.MixTest do
       assert row(Mix.set_row(mix, :band, :balance, -300), :band).balance == -100
     end
 
+    test "moving an off row's level or balance switches it on; level 0 switches it off" do
+      mix = Mix.new(:bass, @bass)
+      assert %{on: false} = row(mix, :voices)
+
+      assert %{on: true, level: 40} = row(Mix.set_row(mix, :voices, :level, 40), :voices)
+      assert %{on: true, balance: -30} = row(Mix.set_row(mix, :voices, :balance, -30), :voices)
+      assert %{on: false} = row(Mix.set_row(mix, :band, :level, 0), :band)
+
+      # Its lane plays: the voices are the rehearsal track's second lane.
+      [_piano, voices, _band] = mix |> Mix.set_row(:voices, :level, 40) |> Mix.lane_gains(true)
+      assert voices == {0.4, 0.4}
+    end
+
     test "My mix restores the saved rows" do
       saved =
         Mix.new(:bass, @bass) |> Mix.set_row(:band, :balance, -40) |> Mix.toggle_row(:voices)
