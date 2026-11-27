@@ -46,7 +46,7 @@ for module <- Songs.all() do
 
   parts =
     Map.new(module.parts(), fn part ->
-      {^part, %{song: song, tracks: tracks}} = Songs.parts(module, part) |> hd()
+      %{song: song, tracks: tracks} = Songs.parts(module, part) |> Keyword.fetch!(part)
       {part, %{song: song_json.(song), tracks: tracks}}
     end)
 
@@ -61,6 +61,8 @@ for module <- Songs.all() do
     start_ms: Song.start_ms(bass),
     duration_ms: Song.duration_ms(bass),
     voice_parts: voice_parts,
+    # Everyone sings the melody: the practice page opens on it.
+    congregational: module.congregational?(),
     parts: parts
   }
 
