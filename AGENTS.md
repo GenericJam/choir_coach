@@ -254,13 +254,18 @@ congregational song (The Joy / Joy to the World) comes with only
 track (`voice: :right`, "Choir"). A song whose recordings don't follow the
 score (O Come, All Ye Faithful: band tracks in another key and form, only
 backing vocals) has its `split.mp3` and `demo.mp3` made from the score
-instead (`scripts/render_score.exs <Module> [<vocal.wav> <offset_ms>]`: the
-module's `accompaniment/0`, the score's piano part as layers of `Song`s, on
-piano left; on the right someone singing the melody to that backing
-(`audio_src/<song>/vocal.wav`, placed at its fitted offset; O Come's is
-Kevin's, from verse 2), else the four parts on Choir Aahs; both stems at
-the same level while they sound; the demo has both in both ears), written
-straight into `priv/audio/`.
+instead (`scripts/render_score.exs <Module> [<take.wav>@<offset_ms> …]`:
+the module's `accompaniment/0`, the score's piano part as layers of
+`Song`s, on piano left; on the right someone singing the melody to that
+backing, in takes (`audio_src/<song>/vocal*.wav`, each placed at its fitted
+offset, pitch-corrected to the melody by `scripts/tune_vocal.py` and
+levelled; O Come's are Kevin's: `vocal_0.wav@730` verse 1, `vocal.wav@43790`
+the rest), else the four parts on Choir Aahs; both stems at the same level
+while they sound; the demo has both in both ears), written straight into
+`priv/audio/`. `tune_vocal.py` runs under `uv` (Praat's PSOLA through
+parselmouth): within each written note it takes out the singer's slow error
+(the deviation smoothed over 150 ms, in the octave they sing) and keeps
+vibrato, breaths and rests as sung.
 
 `piano_<part>.mp3` (soprano, alto, tenor, bass, and the melody of a
 congregational song) is generated, not
@@ -330,9 +335,11 @@ recording follows it): transcribe the parts and the piano part
 against the piano's harmony, then `scripts/render_score.exs <Module>`
 before `render_piano.exs` for each part. Someone singing the melody to that
 backing (on headphones, so the piano doesn't bleed in) gives the voices
-row a real singer and is the only check of the notes: fit its offset
-against the melody (the readings of a sung-along take land at tempo 1.0),
-list the notes it sings off the written pitch, then render again with it.
+row a real singer and is the only check of the notes: fit each take's
+offset against the melody (a sung-along take fits at tempo 1.0; the verses
+share a tune, so check the lyrics with Whisper to pick the right verse),
+list the notes it sings off the written pitch, then render again with the
+takes, which are pitch-corrected on the way in.
 
 ## The audio engine
 

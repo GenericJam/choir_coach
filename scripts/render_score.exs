@@ -1,16 +1,17 @@
 # Renders the recordings of a song that has none, from its transcription:
 # the score's piano accompaniment (`accompaniment/0`) on piano, and the
-# voices: a singer's recording when there is one, else the four voice parts
-# on General MIDI Choir Aahs.
+# voices: takes of a singer singing the melody when there are some, else the
+# four voice parts on General MIDI Choir Aahs.
 #
 #   brew install fluid-synth
 #   SOUNDFONT=~/.local/share/soundfonts/GeneralUser-GS.sf2 \
 #     MIX_ENV=test mix run --no-start scripts/render_score.exs OComeAllYeFaithful \
-#     [audio_src/o_come_all_ye_faithful/vocal.wav 43790]
+#     [audio_src/o_come_all_ye_faithful/vocal_0.wav@730 audio_src/o_come_all_ye_faithful/vocal.wav@43790 …]
 #
-# A recording comes with where it starts on the song's timeline (ms: song
-# time = recording time + offset), as fitted against the melody; it is
-# high-passed at 70 Hz and placed there.
+# Each take comes with where it starts on the song's timeline (ms: song
+# time = take time + offset), as fitted against the melody. It is
+# pitch-corrected to the written melody (scripts/tune_vocal.py, run with
+# `uv`), high-passed at 70 Hz and placed there; the takes are mixed.
 #
 # Writes priv/audio/<song>/split.mp3 (the piano left, the voices right, as a
 # split track has them) and demo.mp3 (both in both ears), 128 kbps stereo,
@@ -20,7 +21,7 @@
 
 Code.require_file("midi.exs", __DIR__)
 
-[mod | sung] = System.argv()
+[mod | takes] = System.argv()
 module = Module.concat(ChoirCoach.Songs, mod)
 soundfont = System.get_env("SOUNDFONT") || raise "set SOUNDFONT to a .sf2 file"
 out_dir = Path.join("priv/audio", Path.dirname(module.tracks(:bass).split.file))
@@ -34,19 +35,54 @@ tmp = fn name -> Path.join(System.tmp_dir!(), "#{mod}-#{name}.wav") end
 piano_wav = ScriptMidi.render(piano, 0, 0, soundfont, tmp.("piano"))
 
 voices_wav =
-  case sung do
+  case takes do
     [] ->
       ScriptMidi.render(voices, 52, 0, soundfont, tmp.("voices"))
 
-    [path, offset_ms] ->
+    takes ->
+      notes_tsv = Path.join(System.tmp_dir!(), "#{mod}-melody.tsv")
+
+      File.write!(
+        notes_tsv,
+        Enum.map(module.melody().notes, &"#{&1.start_ms}\t#{&1.dur_ms}\t#{&1.midi}\n")
+      )
+
+      placed =
+        for {take, i} <- Enum.with_index(takes) do
+          [path, offset_ms] = String.split(take, "@")
+          tuned = tmp.("take#{i}-tuned")
+
+          {log, 0} =
+            System.cmd("uv", ["run", "scripts/tune_vocal.py", path, offset_ms, notes_tsv, tuned],
+              stderr_to_stdout: true
+            )
+
+          IO.write(log |> String.split("\n") |> Enum.filter(&(&1 =~ "notes tuned")) |> Enum.map(&[&1, "\n"]))
+          # Each take to the same level while it sounds, so a quieter take
+          # doesn't leave its verses under the piano.
+          level = ScriptMidi.mean_db(tuned, "c0=c0", "silenceremove=stop_periods=-1:stop_threshold=-45dB")
+          {tuned, offset_ms, -20.0 - level}
+        end
+
+      inputs = Enum.flat_map(placed, fn {wav, _, _} -> ["-i", wav] end)
+
+      filter =
+        Enum.map_join(Enum.with_index(placed), "", fn {{_, offset_ms, gain_db}, i} ->
+          "[#{i}:a]highpass=f=70,volume=#{gain_db}dB,adelay=#{offset_ms}:all=1[t#{i}];"
+        end) <>
+          Enum.map_join(0..(length(placed) - 1), "", &"[t#{&1}]") <>
+          "amix=inputs=#{length(placed)}:normalize=0:duration=longest[v]"
+
       {_, 0} =
         System.cmd(
           "ffmpeg",
-          ["-v", "error", "-y", "-i", path, "-af", "highpass=f=70,adelay=#{offset_ms}:all=1",
-           "-ar", "44100", tmp.("voices")],
+          ["-v", "error", "-y"] ++ inputs ++
+            ["-filter_complex", filter, "-map", "[v]", "-ar", "44100", "-ac", "1", tmp.("voices")],
           stderr_to_stdout: true
         )
 
+      Enum.each(placed, fn {wav, _, _} -> File.rm(wav) end)
+      File.rm(notes_tsv)
       tmp.("voices")
   end
 
@@ -79,7 +115,10 @@ encode.("[p][v]amix=inputs=2:normalize=0,pan=stereo|c0=c0|c1=c0", "demo.mp3")
 
 Enum.each([piano_wav, voices_wav], &File.rm/1)
 
-voice_source = if sung == [], do: "#{length(voices)} synthesized voice notes", else: "the voices from #{hd(sung)}"
+voice_source =
+  if takes == [],
+    do: "#{length(voices)} synthesized voice notes",
+    else: "#{length(takes)} tuned take(s)"
 
 IO.puts(
   "#{module.bass().title}: #{length(piano)} piano notes, #{voice_source}, " <>

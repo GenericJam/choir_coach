@@ -17,12 +17,15 @@ defmodule ChoirCoach.Songs.OComeAllYeFaithful do
   transcription (`scripts/render_score.exs`): the score's piano part
   (`ChoirCoach.Songs.OComeAllYeFaithful.Piano`, doubled by the choir's own
   notes in the refrain, which prints no piano) and Kevin singing the
-  melody to it, `audio_src/o_come_all_ye_faithful/vocal.wav`, verses 2 and 3
-  and the refrain (song time = recording time + 43 790 ms, fitted against
-  the melody: 74% of its readings on the written note, every miss under
-  1.3 semitones flat). Verse 1 has no singer. Beyond that recording nothing
-  can check a note, so every bar was read at 400 dpi and the voices checked
-  against the piano's harmony.
+  melody to it in two takes in `audio_src/o_come_all_ye_faithful/`:
+  `vocal_0.wav`, verse 1 (song time = take time + 730 ms) and `vocal.wav`,
+  verses 2 and 3 and the refrain (+ 43 790 ms), each offset fitted against
+  the melody at the app's tempo. As sung, 74–75% of their readings land on
+  the written note and every miss is under 1.3 semitones; both are
+  pitch-corrected to the melody (`scripts/tune_vocal.py`: 1 note of 209
+  still over 0.3 semitones off, 98% of readings on the note). Beyond those
+  takes nothing can check a note, so every bar was read at 400 dpi and the
+  voices checked against the piano's harmony.
 
   The tune (Adeste Fideles) is the soprano's throughout, so the melody is
   the soprano line. Soprano and alto are the upper and lower voices of the
@@ -60,7 +63,7 @@ defmodule ChoirCoach.Songs.OComeAllYeFaithful do
         voice: :mixed,
         label: "Demo"
       },
-      rehearsal: Map.merge(split, %{label: "Sung melody", detail: "One voice, from verse 2"}),
+      rehearsal: Map.merge(split, %{label: "Sung melody", detail: "One voice, pitch-corrected"}),
       piano: %{
         file: "o_come_all_ye_faithful/piano_#{part}.mp3",
         bar1_ms: 1_000.0,
