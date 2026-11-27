@@ -101,14 +101,18 @@ its tokens live in `ChoirCoach.Style`.
   track's voice channel, its `voice`: left on a part rehearsal track, right
   on a split track; named by the track's `label` and `detail`), `:band`
   (the other channel)), each with on, level 0–100 and balance −100…100;
-  presets Rehearsal, Me in right ear, Full choir / Demo (whole recordings,
-  a single file), My mix. `load_spec/2` gives the engine's sources and
+  presets Rehearsal, Me in right ear (every row on: the part and the band
+  placed, the voices at 60 on the part's side; the singer turns off what
+  they don't want), Full choir / Demo (whole recordings, a single file), My
+  mix. A row's swatch is its on/off toggle, which singers missed (an off
+  row's sliders seemed dead), so moving a slider switches its row on.
+  `load_spec/2` gives the engine's sources and
   lanes; `lane_gains/2` the per-lane L/R gains (L = level·min(1, 1−b),
   R = level·min(1, 1+b); mono averages). The last mix is kept per part
   across songs; `fit/3` fits it to the song (a preset re-applied, a custom
-  mix's rows kept where the song has them), so a melody mix with a piano
-  row can open a song whose melody has none. "Without me" needs voice
-  stems, which don't exist yet.
+  mix's rows kept where the song has them, a row it never had on as the
+  song's default), so a melody mix with a piano row can open a song whose
+  melody has none. "Without me" needs voice stems, which don't exist yet.
 - `ChoirCoach.Audio` — the engine contract (song-time load / play / pause /
   stop / position / mix / listen / readings, devices). `Audio.Native` wraps
   the `choir_audio` NIF, the app's DSP as `mob_audio_io` processors on both

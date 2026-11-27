@@ -60,9 +60,9 @@ defmodule ChoirCoach.Mix do
     custom: "Custom"
   }
 
-  # Level and balance of rows a preset turns off, for when the singer turns
-  # them back on.
-  @off_level 60
+  # Level of a row a preset doesn't place (the voices, when the part has a
+  # piano): on, on the part's side, under it.
+  @other_level 60
 
   @doc "The part's default mix (Rehearsal), with a piano row when `tracks` has a piano track."
   @spec new(part(), map()) :: t()
@@ -80,7 +80,7 @@ defmodule ChoirCoach.Mix do
   kept per part across songs, or nil) fitted to this song's `tracks`. Rows
   come from the song (its piano row, its rehearsal track's name); a preset
   is re-applied, and a custom mix or "My mix" keeps the rows it shares with
-  the song, leaving any other row off.
+  the song; a row it never had starts as the song's default (on).
   """
   @spec fit(t() | nil, part(), map()) :: t()
   def fit(nil, part, tracks), do: new(part, tracks)
@@ -111,15 +111,18 @@ defmodule ChoirCoach.Mix do
 
   def apply_preset(mix, :my_mix, saved), do: %{take_rows(mix, saved) | preset: :my_mix}
 
+  # Every row plays in a row preset (the singer turns off what they don't
+  # want): the part and the band where the preset puts them, any other row
+  # at `@other_level` on the part's side.
   def apply_preset(mix, id, _saved) when id in [:rehearsal, :right_ear] do
-    settings = preset_rows(id, lead_id(mix))
+    lead = lead_id(mix)
+    settings = preset_rows(id, lead)
+    {_, lead_balance} = settings[lead]
 
     rows =
       Enum.map(mix.rows, fn row ->
-        case Map.fetch(settings, row.id) do
-          {:ok, {level, balance}} -> %{row | on: true, level: level, balance: balance}
-          :error -> %{row | on: false, level: @off_level, balance: 0}
-        end
+        {level, balance} = Map.get(settings, row.id, {@other_level, lead_balance})
+        %{row | on: true, level: level, balance: balance}
       end)
 
     %{mix | preset: id, recording: nil, rows: rows}
@@ -266,7 +269,8 @@ defmodule ChoirCoach.Mix do
   def same_load?(%{recording: rec}, %{recording: rec}), do: true
   def same_load?(_a, _b), do: false
 
-  # `mix` with `saved`'s settings on the rows both have; its other rows off.
+  # `mix` with `saved`'s settings on the rows both have; a row `saved` never
+  # had keeps `mix`'s.
   defp take_rows(mix, saved) do
     saved_rows = Map.new(saved.rows, &{&1.id, &1})
 
@@ -274,7 +278,7 @@ defmodule ChoirCoach.Mix do
       Enum.map(mix.rows, fn row ->
         case Map.fetch(saved_rows, row.id) do
           {:ok, s} -> %{row | on: s.on, level: s.level, balance: s.balance}
-          :error -> %{row | on: false}
+          :error -> row
         end
       end)
 
@@ -283,7 +287,7 @@ defmodule ChoirCoach.Mix do
 
   defp blank_row(id, part, tracks) do
     {label, detail} = row_text(id, part, tracks)
-    %{id: id, label: label, detail: detail, on: false, level: @off_level, balance: 0}
+    %{id: id, label: label, detail: detail, on: false, level: @other_level, balance: 0}
   end
 
   defp row_text(:part_piano, part, _tracks),

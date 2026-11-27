@@ -71,12 +71,12 @@ defmodule ChoirCoach.MixTest do
       assert row(Mix.new(:melody, @melody), :voices).label == "Soprano rehearsal"
     end
 
-    test "the default is Rehearsal: the part 80 C, band 70 C, the rest off" do
+    test "the default is Rehearsal, every row on: the part 80 C, band 70 C, the voices 60 C" do
       bass = Mix.new(:bass, @bass)
       assert Mix.caption(bass) == "Rehearsal"
       assert %{on: true, level: 80, balance: 0} = row(bass, :part_piano)
       assert %{on: true, level: 70, balance: 0} = row(bass, :band)
-      assert %{on: false} = row(bass, :voices)
+      assert %{on: true, level: 60, balance: 0} = row(bass, :voices)
 
       melody = Mix.new(:melody, @melody)
       assert %{on: true, level: 80, balance: 0} = row(melody, :voices)
@@ -94,11 +94,12 @@ defmodule ChoirCoach.MixTest do
       assert labels == ["Rehearsal", "Me in right ear", "Full choir", "Demo", "My mix"]
     end
 
-    test "Me in right ear puts the part right and the band left" do
+    test "Me in right ear puts the part (and the voices with it) right and the band left" do
       mix = Mix.apply_preset(Mix.new(:bass, @bass), :right_ear)
       # The transport's caption is short: it must fit a 48 dp control.
       assert Mix.caption(mix) == "Right ear"
       assert %{on: true, level: 75, balance: 80} = row(mix, :part_piano)
+      assert %{on: true, level: 60, balance: 80} = row(mix, :voices)
       assert %{on: true, level: 60, balance: -60} = row(mix, :band)
       assert Mix.value_label(row(mix, :part_piano), false) == "75 · R 80"
       assert Mix.value_label(row(mix, :band), false) == "60 · L 60"
@@ -115,7 +116,7 @@ defmodule ChoirCoach.MixTest do
 
       mix = Mix.apply_preset(mix, :rehearsal) |> Mix.toggle_row(:voices)
       assert Mix.caption(mix) == "Custom"
-      assert row(mix, :voices).on
+      refute row(mix, :voices).on
     end
 
     test "levels and balances are clamped" do
@@ -125,7 +126,7 @@ defmodule ChoirCoach.MixTest do
     end
 
     test "moving an off row's level or balance switches it on; level 0 switches it off" do
-      mix = Mix.new(:bass, @bass)
+      mix = Mix.new(:bass, @bass) |> Mix.toggle_row(:voices)
       assert %{on: false} = row(mix, :voices)
 
       assert %{on: true, level: 40} = row(Mix.set_row(mix, :voices, :level, 40), :voices)
@@ -145,7 +146,7 @@ defmodule ChoirCoach.MixTest do
 
       assert Mix.caption(mix) == "My mix"
       assert row(mix, :band).balance == -40
-      assert row(mix, :voices).on
+      refute row(mix, :voices).on
 
       assert Mix.apply_preset(mix, :rehearsal) |> Mix.apply_preset(:my_mix) |> Mix.caption() ==
                "Rehearsal"
@@ -165,8 +166,8 @@ defmodule ChoirCoach.MixTest do
                guide_lane: 0
              }
 
-      # piano 80 C, voices off, band 70 C
-      assert Mix.lane_gains(mix, false) == [{0.8, 0.8}, {0.0, 0.0}, {0.7, 0.7}]
+      # piano 80 C, voices 60 C, band 70 C
+      assert Mix.lane_gains(mix, false) == [{0.8, 0.8}, {0.6, 0.6}, {0.7, 0.7}]
     end
 
     test "melody: rehearsal left (voices) and right (band); guide is the voices" do
@@ -241,25 +242,27 @@ defmodule ChoirCoach.MixTest do
 
       assert Mix.caption(mix) == "Right ear"
       assert %{on: true, level: 75, balance: 80} = row(mix, :part_piano)
-      assert %{on: false, label: "Choir"} = row(mix, :voices)
+      assert %{on: true, level: 60, balance: 80, label: "Choir"} = row(mix, :voices)
     end
 
     test "a custom mix keeps the rows the song has; a piano it lacks is dropped" do
       last =
         Mix.new(:melody, @choir_melody)
         |> Mix.set_row(:part_piano, :balance, 30)
-        |> Mix.toggle_row(:voices)
+        |> Mix.toggle_row(:band)
 
       mix = Mix.fit(last, :melody, @melody)
 
       assert Mix.caption(mix) == "Custom"
       assert Enum.map(mix.rows, & &1.id) == [:voices, :band]
       assert %{on: true, label: "Soprano rehearsal"} = row(mix, :voices)
+      assert %{on: false} = row(mix, :band)
       assert [%{file: "song/soprano.mp3"}] = Mix.load_spec(mix, @melody).sources
       assert length(Mix.lane_gains(mix, false)) == 2
 
-      # Back on a song with a piano, the piano the custom mix didn't keep stays off.
-      assert %{on: false} = row(Mix.fit(mix, :melody, @choir_melody), :part_piano)
+      # Back on a song with a piano: the piano, a row this mix never had,
+      # starts as the song's default, on.
+      assert %{on: true, level: 80} = row(Mix.fit(mix, :melody, @choir_melody), :part_piano)
     end
   end
 
