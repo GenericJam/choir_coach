@@ -252,12 +252,15 @@ rehearsal track is the soprano's, since the tune is mostly theirs. A
 congregational song (The Joy / Joy to the World) comes with only
 `split.mp3` and `demo.mp3`: the split track is every part's rehearsal
 track (`voice: :right`, "Choir"). A song whose recordings don't follow the
-score (O Come, All Ye Faithful: band tracks in another key and form, no
-singer) has its `split.mp3` and `demo.mp3` rendered from the score instead
-(`scripts/render_score.exs <Module>`: the module's `accompaniment/0`, the
-score's piano part as layers of `Song`s, on piano left; the four parts on
-Choir Aahs right; both stems at the same level; the demo has both in both
-ears), written straight into `priv/audio/`.
+score (O Come, All Ye Faithful: band tracks in another key and form, only
+backing vocals) has its `split.mp3` and `demo.mp3` made from the score
+instead (`scripts/render_score.exs <Module> [<vocal.wav> <offset_ms>]`: the
+module's `accompaniment/0`, the score's piano part as layers of `Song`s, on
+piano left; on the right someone singing the melody to that backing
+(`audio_src/<song>/vocal.wav`, placed at its fitted offset; O Come's is
+Kevin's, from verse 2), else the four parts on Choir Aahs; both stems at
+the same level while they sound; the demo has both in both ears), written
+straight into `priv/audio/`.
 
 `piano_<part>.mp3` (soprano, alto, tenor, bass, and the melody of a
 congregational song) is generated, not
@@ -324,8 +327,12 @@ a piano for every part including the melody.
 A song rendered from its score (the sheet music is canonical and no
 recording follows it): transcribe the parts and the piano part
 (`accompaniment/0`) unrolled in performance order, check every voice note
-against the piano's harmony (nothing else can check it), then
-`scripts/render_score.exs <Module>` before `render_piano.exs` for each part.
+against the piano's harmony, then `scripts/render_score.exs <Module>`
+before `render_piano.exs` for each part. Someone singing the melody to that
+backing (on headphones, so the piano doesn't bleed in) gives the voices
+row a real singer and is the only check of the notes: fit its offset
+against the melody (the readings of a sung-along take land at tempo 1.0),
+list the notes it sings off the written pitch, then render again with it.
 
 ## The audio engine
 

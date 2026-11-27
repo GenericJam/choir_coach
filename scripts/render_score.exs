@@ -1,10 +1,16 @@
 # Renders the recordings of a song that has none, from its transcription:
-# the score's piano accompaniment (`accompaniment/0`) on piano and the four
-# voice parts on General MIDI Choir Aahs.
+# the score's piano accompaniment (`accompaniment/0`) on piano, and the
+# voices: a singer's recording when there is one, else the four voice parts
+# on General MIDI Choir Aahs.
 #
 #   brew install fluid-synth
 #   SOUNDFONT=~/.local/share/soundfonts/GeneralUser-GS.sf2 \
-#     MIX_ENV=test mix run --no-start scripts/render_score.exs OComeAllYeFaithful
+#     MIX_ENV=test mix run --no-start scripts/render_score.exs OComeAllYeFaithful \
+#     [audio_src/o_come_all_ye_faithful/vocal.wav 43790]
+#
+# A recording comes with where it starts on the song's timeline (ms: song
+# time = recording time + offset), as fitted against the melody; it is
+# high-passed at 70 Hz and placed there.
 #
 # Writes priv/audio/<song>/split.mp3 (the piano left, the voices right, as a
 # split track has them) and demo.mp3 (both in both ears), 128 kbps stereo,
@@ -14,7 +20,7 @@
 
 Code.require_file("midi.exs", __DIR__)
 
-[mod] = System.argv()
+[mod | sung] = System.argv()
 module = Module.concat(ChoirCoach.Songs, mod)
 soundfont = System.get_env("SOUNDFONT") || raise "set SOUNDFONT to a .sf2 file"
 out_dir = Path.join("priv/audio", Path.dirname(module.tracks(:bass).split.file))
@@ -26,12 +32,29 @@ end_s = (Enum.map(piano ++ voices, &elem(&1, 2)) |> Enum.max()) / 1000 + 3
 
 tmp = fn name -> Path.join(System.tmp_dir!(), "#{mod}-#{name}.wav") end
 piano_wav = ScriptMidi.render(piano, 0, 0, soundfont, tmp.("piano"))
-voices_wav = ScriptMidi.render(voices, 52, 0, soundfont, tmp.("voices"))
 
-# Both stems to the same mean level, so neither ear of the split drowns the
-# other; the demo mixes them at that level.
+voices_wav =
+  case sung do
+    [] ->
+      ScriptMidi.render(voices, 52, 0, soundfont, tmp.("voices"))
+
+    [path, offset_ms] ->
+      {_, 0} =
+        System.cmd(
+          "ffmpeg",
+          ["-v", "error", "-y", "-i", path, "-af", "highpass=f=70,adelay=#{offset_ms}:all=1",
+           "-ar", "44100", tmp.("voices")],
+          stderr_to_stdout: true
+        )
+
+      tmp.("voices")
+  end
+
+# Both stems to the same level while they sound (silence left out, so a
+# recording that starts part way isn't boosted), so neither ear of the split
+# drowns the other; the demo mixes them at that level.
 target_db = -20.0
-gain = fn wav -> target_db - ScriptMidi.mean_db(wav, "c0=0.5*c0+0.5*c1") end
+gain = fn wav -> target_db - ScriptMidi.mean_db(wav, "c0=0.5*c0+0.5*c1", "silenceremove=stop_periods=-1:stop_threshold=-45dB") end
 {gp, gv} = {gain.(piano_wav), gain.(voices_wav)}
 
 encode = fn filter, out ->
@@ -56,8 +79,10 @@ encode.("[p][v]amix=inputs=2:normalize=0,pan=stereo|c0=c0|c1=c0", "demo.mp3")
 
 Enum.each([piano_wav, voices_wav], &File.rm/1)
 
+voice_source = if sung == [], do: "#{length(voices)} synthesized voice notes", else: "the voices from #{hd(sung)}"
+
 IO.puts(
-  "#{module.bass().title}: #{length(piano)} piano notes, #{length(voices)} voice notes, " <>
+  "#{module.bass().title}: #{length(piano)} piano notes, #{voice_source}, " <>
     "#{Float.round(end_s, 1)} s -> #{out_dir}/split.mp3, demo.mp3 " <>
     "(piano #{Float.round(gp, 1)} dB, voices #{Float.round(gv, 1)} dB)"
 )

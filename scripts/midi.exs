@@ -72,12 +72,18 @@ defmodule ScriptMidi do
     wav_path
   end
 
-  @doc "A file's mean volume in dB, through an ffmpeg `pan` to mono (e.g. `c0=c1`)."
-  def mean_db(input, pan) do
+  @doc """
+  A file's mean volume in dB, through an ffmpeg `pan` to mono (e.g. `c0=c1`)
+  and any further `filter` (e.g. `silenceremove=…`, to measure only while it
+  sounds).
+  """
+  def mean_db(input, pan, filter \\ nil) do
+    af = Enum.join(["pan=mono|#{pan}", filter, "volumedetect"] |> Enum.reject(&is_nil/1), ",")
+
     {log, 0} =
       System.cmd(
         "ffmpeg",
-        ["-v", "info", "-i", input, "-af", "pan=mono|#{pan},volumedetect", "-f", "null", "-"],
+        ["-v", "info", "-i", input, "-af", af, "-f", "null", "-"],
         stderr_to_stdout: true
       )
 

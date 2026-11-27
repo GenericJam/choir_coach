@@ -12,13 +12,17 @@ defmodule ChoirCoach.Songs.OComeAllYeFaithful do
   opens on it, with the singer's own part to switch to.
 
   The sheet music is canonical. The choir's band recordings follow another
-  arrangement (in F, with its own form, and no singer), so the app's
-  recordings are rendered from this transcription
-  (`scripts/render_score.exs`): the score's piano part
+  arrangement (in F, with its own form; its only voices are backing
+  harmonies in the choruses), so the app's recordings are made from this
+  transcription (`scripts/render_score.exs`): the score's piano part
   (`ChoirCoach.Songs.OComeAllYeFaithful.Piano`, doubled by the choir's own
-  notes in the refrain, which prints no piano) and the four parts sung by a
-  synthesized choir. Nothing recorded can check a note, so every bar was
-  read at 400 dpi and the voices checked against the piano's harmony.
+  notes in the refrain, which prints no piano) and Kevin singing the
+  melody to it, `audio_src/o_come_all_ye_faithful/vocal.wav`, verses 2 and 3
+  and the refrain (song time = recording time + 43 790 ms, fitted against
+  the melody: 74% of its readings on the written note, every miss under
+  1.3 semitones flat). Verse 1 has no singer. Beyond that recording nothing
+  can check a note, so every bar was read at 400 dpi and the voices checked
+  against the piano's harmony.
 
   The tune (Adeste Fideles) is the soprano's throughout, so the melody is
   the soprano line. Soprano and alto are the upper and lower voices of the
@@ -36,9 +40,9 @@ defmodule ChoirCoach.Songs.OComeAllYeFaithful do
   def congregational?, do: true
 
   @doc """
-  Each part's recordings, all rendered from the score
-  (`scripts/render_score.exs`): the split track (the piano accompaniment
-  left, the four voices right) serves every part, beside the part's piano.
+  Each part's recordings, made from the score (`scripts/render_score.exs`):
+  the split track (the piano accompaniment left, the sung melody right)
+  serves every part, beside the part's piano.
   """
   def tracks(part) do
     split = %{
@@ -56,7 +60,7 @@ defmodule ChoirCoach.Songs.OComeAllYeFaithful do
         voice: :mixed,
         label: "Demo"
       },
-      rehearsal: Map.merge(split, %{label: "Voices", detail: "All four parts, synthesized"}),
+      rehearsal: Map.merge(split, %{label: "Sung melody", detail: "One voice, from verse 2"}),
       piano: %{
         file: "o_come_all_ye_faithful/piano_#{part}.mp3",
         bar1_ms: 1_000.0,
