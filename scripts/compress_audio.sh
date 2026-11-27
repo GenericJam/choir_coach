@@ -8,6 +8,11 @@
 #
 #   scripts/compress_audio.sh
 #
+# The Joy's split track has its choir (right) 11.6 dB under the band (left);
+# the other songs' sit about 3 dB under. Its copy raises the choir 8.5 dB to
+# match, a limiter catching the peaks that would clip (the original stays as
+# downloaded).
+#
 # The piano tracks (piano_<part>.mp3) aren't here: scripts/render_piano.exs
 # writes them straight into priv/audio/.
 set -eu
@@ -22,7 +27,14 @@ for src in audio_src/*/*.mp3; do
   # Encode beside the target and rename once complete, so an interrupted
   # run never leaves a newer, truncated file that the next run would skip.
   tmp="$out.partial.mp3"
-  ffmpeg -v error -y -i "$src" -map 0:a -ar 44100 -ac 2 -c:a libmp3lame -b:a 128k "$tmp"
+  case "$song/$(basename "$src")" in
+    joy_to_the_world/split.mp3)
+      ffmpeg -v error -y -i "$src" -filter_complex \
+        "[0:a]channelsplit=channel_layout=stereo[l][r];[r]volume=8.5dB,alimiter=limit=0.89:attack=5:release=50:level=0[v];[l][v]join=inputs=2:channel_layout=stereo[a]" \
+        -map "[a]" -ar 44100 -ac 2 -c:a libmp3lame -b:a 128k "$tmp" ;;
+    *)
+      ffmpeg -v error -y -i "$src" -map 0:a -ar 44100 -ac 2 -c:a libmp3lame -b:a 128k "$tmp" ;;
+  esac
   mv "$tmp" "$out"
   echo "$out"
 done
